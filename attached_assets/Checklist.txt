@@ -1,0 +1,546 @@
+
+## 🔹 GUI / Felület
+
+1. Minden UI frissítés főszálon fusson, hogy ne okozzon összeomlást.
+2. Nincs blokkoló GUI-művelet – semmi ne akassza a fő szálat (pl. API hívás közvetlenül a UI-ból).
+3. High-DPI és DPI scaling támogatás minden widgetre.
+4. Helyes objektum-élettartam kezelés (`deleteLater()` Qt-ben, megfelelő dispose más GUI frameworköknél).
+5. Input validáció minden beviteli mezőben: Stop Loss, Take Profit, lot méret, minimum–maximum, step ellenőrzés.
+6. Misclick védelem – például confirm popup, undo funkció.
+7. Hotkey fókusz-csapda elkerülése – ne ragadjon billentyűzetfókusz.
+8. Clipboard és drag\&drop validáció – ne lehessen rossz adatot bemásolni.
+9. Resize és multi-monitor fallback – GUI elrendezés ne essen szét több kijelzőn.
+10. GUI timeframe mindig egyezzen a stratégiában számolt timeframe-mel.
+11. Event handlerek kivétel-biztosak legyenek.
+12. Chart history hossz korlátozása és memória-limit.
+13. GDI/USER handle leak védelem.
+14. GPU TDR reset/device-lost fallback.
+15. Font fallback Unicode karakterekhez.
+16. IME és CJK input támogatás.
+17. RTL és Unicode szöveg (jobbról balra írás, emoji).
+18. Dark és Light theme váltás futásidőben.
+19. Alt-Tab és fókuszvesztés ne ragasszon modális ablakot.
+20. Tooltip és overlay ne szivárogjon memória hosszú futás során.
+21. Képernyőforgatás vagy dokkolás közben layout újraszámítása.
+22. High-contrast és színtévesztés-barát színpaletta.
+23. Touch és multi-touch edge-case kezelése, gesture duplatrigger védelem.
+24. Accessibility API kompatibilitás (képernyőolvasó, narrator).
+25. 120–240 Hz monitorok frame pacing guard.
+26. `WM_DISPLAYCHANGE` esemény kezelése relayouttal.
+27. GPU resource leak guard hosszú futásnál.
+28. VSync kikapcsolás fallback szabályozással.
+29. ICC színkezelés és HDR–SDR profile kompatibilitás.
+30. Memóriatöredezettség guard hosszú futásnál (UI cache purge).
+31. DPI kerekítési hibák fractional scaling esetén.
+32. Threaded render context hibák kezelése.
+33. Headless (monitor nélküli) futás memória-leak guard.
+34. Decimális elválasztó kezelése locale alapján (`,` vagy `.`).
+35. Nagy clipboard tartalom (kép, JSON) aszinkron feldolgozása és méretlimit.
+36. Per-monitor DPI awareness v2 támogatás.
+37. Színtér gamut clipping guard (sRGB ↔ wide gamut konverzió).
+38. Z-order fókusz guard always-on-top dialógusokra.
+39. Dead pixel vagy render-artifact esetén fallback szoftver render.
+40. Input device váltás (egér, érintő, stylus) guard.
+41. Virtual desktop váltás (Windows több asztal) guard.
+42. Accessibility overlay (magnifier, narrator) kompatibilitás.
+
+## 🔹 Websocket / REST / Binance
+
+1. Auto-reconnect exponenciális backoff algoritmussal.
+2. Ping/Pong keepalive implementálva.
+3. Rate-limit guard (HTTP 429 és 418 kezelése).
+4. Reconnect után duplikált események szűrése.
+5. OrderBook sequence gap esetén snapshot resync.
+6. `exchangeInfo` cache időszakos frissítése.
+7. listenKey keepalive és időszakos megújítás.
+8. Symbol delist és maintenance figyelés.
+9. REST és WS adat konzisztens merge.
+10. Proxy vagy VPN váltás esetén reconnect.
+11. Maintenance és trading halt REST jelzés kezelése.
+12. WS tömörítés és fragmentáció kezelése.
+13. DNS/CA store fallback.
+14. Szimbólum átnevezés vagy kivezetés kezelése.
+15. recvWindow és óradrift guard.
+16. HMAC és UTF-8 canonical query kezelés.
+17. MTU és fragmentáció guard.
+18. Indításkori order reconcile REST-tel.
+19. Cancel-on-disconnect támogatás.
+20. Hibakód-tábla minden errorhoz.
+21. Cancel-replace atomikus.
+22. Order TTL és árva order guard.
+23. Subscription reconciliation reconnect után.
+24. Server time sync periodikus.
+25. VIP tier és fee változás detektálás.
+26. Kline részleges gyertya kezelése.
+27. aggTrade és trade esemény duplikáció szűrés.
+28. Event-time és trade-time konzisztencia.
+29. Burst reconnect storm guard.
+30. REST limit weight koordináció modulok között.
+31. TLS session ticket lejárat és resumption fallback.
+32. JSON számok extrém exponenssel safe parse.
+33. Info event trading-tilt külön ág.
+34. Out-of-order WS üzenetek reorder buffer.
+35. REST partial success reconcile.
+36. Exchange-specific precision drift guard.
+37. IPv4 és IPv6 dual-stack fallback.
+38. SNI és CN mismatch guard.
+39. HTTP/2 → HTTP/1.1 downgrade kompatibilitás.
+40. Proxy 407 Auth non-blocking retry.
+41. DNS TTL és poisoning guard.
+42. Middlebox RST és idle drop detect.
+43. Gzip és Brotli tömörítésváltás REST-ben safe parse.
+44. User Data Stream listenKey silent expire heartbeat guard.
+45. Leap second és leap smear drift guard.
+46. Undocumented JSON field parse fallback.
+47. Cross-region endpoint váltás guard.
+48. NTP elérhetetlenség drift guard.
+49. HSTS és proxy MITM cert pinning.
+50. Retry-jitter reconnect storm elkerülésére.
+51. Idempotency token POST hívásokhoz.
+52. HTTP 100-Continue kikapcsolás kis payloadnál.
+53. Event ordering több stream között rendezett merge.
+54. Split TCP packet reorder guard.
+55. Proxy auth expire token refresh loop.
+56. Cloudflare vagy Akamai 503 HTML rate-limit detect.
+
+## 🔹 Pozíciókezelés / Végrehajtás
+
+1. Balance ellenőrzés minden pozíciónyitás előtt.
+2. Idempotens order retry clientOrderId-vel.
+3. Partial fill state machine implementálás.
+4. Atomic SL, TP és trailing update.
+5. Több pozíció stop összehangolt kezelése.
+6. Slippage és latency guard.
+7. Mark ár és Last ár guard.
+8. Max slippage és spread guard.
+9. Demo és Live környezet szétválasztása.
+10. Manual override lock.
+11. TIF és order flag validáció.
+12. Margin változás kezelve.
+13. Trade cooldown és hiszterézis.
+14. MinNotional és StepSize validáció.
+15. Unknown és PENDING\_NEW állapot kezelése.
+16. Reduce-only guard.
+17. Order ID újrafelhasználás tiltva.
+18. PnL overflow guard.
+19. Position mode felismerés (hedge vagy one-way).
+20. Isolated és cross margin risk logika.
+21. Rounding-policy: truncate vagy floor.
+22. OCO invariánsok.
+23. Cross-collateral risk recalculation.
+24. Fee-aware kerekítés.
+25. Post-only reject guard.
+26. Index vs Mark vs Last trigger választás.
+27. Force liquidation feed feldolgozása.
+28. Iceberg és hidden order degrade.
+29. Multi-asset margin árfolyam guard.
+30. Self-trade prevention.
+31. Orphan reduce-only auto-cancel.
+32. Price band és ársáv guard.
+33. Trailing anchor hibás frissítés guard.
+34. Post-only → IOC degradáció tiltó opcióval.
+35. Cross-position hedging ütközés guard.
+36. PnL currency drift guard.
+37. Dust balance auto-convert rounding guard.
+38. Market order protection band.
+39. Bracket (entry + OCO) atomikusság.
+40. Cancel timeout fallback.
+41. MinNotional after partials guard.
+42. Max open orders / symbol tőzsdei limit guard.
+43. Unsettled díj vagy funding negatív balance guard.
+44. FIFO és hedge szabályütközés guard.
+45. Stop-cascade védelem illikvid könyvben.
+46. Negative fee rebate overflow guard.
+47. Cross-venue arbitrage fill drift reconcile.
+48. Stale account snapshot deposit vagy withdraw után.
+49. Funding boundary percre pontos guard.
+50. Exchange precízió-váltás futás közben.
+51. Liquidation engine false positive guard.
+52. Borrow és auto-repay mellékhatás guard.
+53. Multi-leg arbitrage rollback guard.
+54. Phantom fill reconcile REST snapshot alapján.
+55. Extreme negative balance API bug clamp.
+
+## 🔹 Stratégia / Score
+
+1. Minden stratégiai score érték normalizálása és felső korlátozása (cap), hogy ne ugorjon a végtelenbe.
+2. Indikátorok bemelegítési periódusa biztosítva legyen (warm-up), mielőtt jelet adnak.
+3. Minden output NaN és ∞ szűrésen essen át.
+4. Több jel egyidejű konfliktuskezelése – prioritás, szavazás vagy konszenzus.
+5. Stratégiaváltás biztonságosan, snapshot mentéssel és rollback lehetőséggel.
+6. Feature flag-ek perzisztens tárolása és beolvasása.
+7. Timeframe harmonizáció, minden jel és adat azonos UTC timestamp szerint.
+8. Jel-duplikáció guard – ugyanazt a jelet egyszer vegye csak figyelembe.
+9. Matematikai guard: divízió nullával, logaritmus nulla alatt, negatív négyzetgyök.
+10. EMA és más indikátorok inicializációs torzításának kezelése.
+11. Portfólió korreláció guard – ne legyen túl nagy kitettség hasonló instrumentumokra.
+12. Regime drift detektor – ha a piac szerkezete jelentősen változik, jelezzen.
+13. Loss/news cooldown – hírek után vagy vesztes széria esetén kereskedési szünet.
+14. Session és naptár szabályok – DST, hétvége, ünnepnap felismerése.
+15. Score stale guard – ha egy jel túl régi, ne számítson érvényesnek.
+16. Margin cache stale guard – margin adatok elavulásának felismerése.
+17. Martingale stratégia tiltása.
+18. Napi maximális veszteség limit – circuit breaker funkció.
+19. Stratégiák közötti kereszthatás tiltása – ne erősítsék túl egymást.
+20. Maximális tradek száma naponta és páronként.
+21. Duplikált stratégia példány tiltása.
+22. Cache TTL guard – lejárt cache sose adjon jelet.
+23. Konzisztens snapshot: orderbook, ticker, indikátor egyszerre legyen konzisztens.
+24. Schmitt-trigger jelzóna (hiszterézis két küszöbbel).
+25. Indicator divergence guard – különböző TF-ek közötti ellentmondások szűrése.
+26. Parameter drift guard – paraméterek CRC vagy checksum validálása.
+27. Lokálisan aggregált timeframe torzítás guard.
+28. Cross-asset hedge mapping validáció.
+29. Overfit detection futás közben – ha a stratégia túl „jó” a backtesten, gyanús.
+30. Inter-strategy deadlock detection – ha két stratégia blokkolja egymást.
+31. Cointegráció vagy korreláció szétesés guard.
+32. Dupla vagy átfedő gyertya anomália guard.
+33. Cross-venue ár divergencia guard.
+34. Volatilitás-rezsim váltás guard.
+35. Külső adatforrás ütközés guard.
+36. Outlier-kezelés az indikátor pipeline-ban.
+37. Költségmodell-drift automata recalibration.
+38. Feature scaling drift watchdog – skálázás torzulása esetén jelzés.
+39. Concept drift guard AI alapú stratégiákhoz – újratanítás vagy alert.
+40. Data leakage cross-validation guard – train és test adat ne keveredjen.
+41. Hyperparaméter cache invalidáció környezetváltáskor.
+42. Újonnan listázott szimbólumokra külön risk cap és warm-up idő.
+43. Memoizáció stale input-hash guard.
+44. Ex-ante és ex-post slippage korrekció.
+45. Overlapping strategy bias deduplikáció.
+46. Auto-threshold adaptáció hiba guard.
+47. Zero-variance input (pl. teljesen lapos piac) guard.
+
+## 🔹 Szálkezelés / Async
+
+1. Race condition kizárva – minden állapotváltoztatás atomikusan történjen.
+2. Deadlock elkerülése – megfelelő lock hierarchia.
+3. Priority inversion védelem.
+4. Bounded queue + back-pressure – ha túl sok üzenet jön, lassítson.
+5. Event loop starvation watchdog.
+6. Szálkivétel kezelése – kivétel ne ölje meg csendben a szálat.
+7. Reentrancia guard – ne léphessen ugyanabba a kódba újra.
+8. Windows SEH handler integráció.
+9. Timer drift fix – alvás után időzítők újrainicializálása.
+10. ABA-probléma guard lock-free struktúrákban.
+11. False sharing minimalizálás.
+12. Denormal float guard – CPU lassulás elkerülése.
+13. High-resolution timer újrainicializálás.
+14. Thread-pool kimerülés monitorozása.
+15. Affinitás és QoS prioritás beállítása.
+16. Socket keepalive tuning.
+17. Crash-loop safe mode indítás.
+18. CPU feature detection (SSE/AVX).
+19. Socket handle leak monitor.
+20. Állapot-tranzakciók – atomic snapshot frissítések.
+21. IO és számítás QoS szétválasztás.
+22. GUI freeze watchdog.
+23. Dead thread handle leak detection.
+24. Ring buffer wrap-around guard.
+25. Fairness aging guard – ne starve-oljon egy szál.
+26. Timer heap drift guard.
+27. Async exception propagation guard.
+28. Condition variable spurious wakeup guard.
+29. NUMA-aware queue kezelés.
+30. Spin-wait backoff stratégia.
+31. Scheduler időváltozás kezelése.
+32. IOCP vagy CompletionPort burst fairness guard.
+33. Handle table telítettség guard.
+34. Fiber vagy coroutine starvation watchdog.
+35. Thread-local storage leak audit.
+36. Futex vagy WaitFor spurious timeout retry.
+37. Időbélyeg 32-bit overflow guard (milliszekundum counter túlcsordulás).
+38. `steady_clock` monotonicity check – rollback vagy bug esetén alert.
+39. Thread pool work-stealing fairness guard.
+40. Signal handler reentrancy guard (pl. Ctrl+C közben logolás).
+41. Stack overflow recursion guard (indikátorban vagy stratégiában).
+42. Thread priority inversion OS bug watchdog.
+
+## 🔹 Adat / Fájl / Állapot
+
+1. Konfigurációs fájl validáció minden indításkor.
+2. Atomic write: mindig ideiglenes fájlba ír, majd átnevezés.
+3. Crash recovery: félbehagyott fájlokat felismeri és javítja.
+4. Aszinkron logolás – ne blokkolja a fő szálat.
+5. Disk full buffer kezelés: ha a lemez megtelt, ne álljon le a rendszer.
+6. MAX\_PATH guard – Windows fájlútvonal hossza ne lépje túl a limitet.
+7. Antivírus által okozott file-lock retry.
+8. Minidump és Windows Error Reporting támogatás.
+9. Log redakció – érzékeny adatok kitakarása.
+10. Fixpontos számábrázolás pénzügyi adatokhoz.
+11. JSON precízió ellenőrzése.
+12. Log időbélyeg UTC + offset.
+13. Adatbázis séma-migráció verziózva.
+14. SQLite WAL crash-tűrés.
+15. UTF-8 kódolás minden fájlban.
+16. Checksum ellenőrzés kritikus fájlokra.
+17. Cross-volume atomic rename fallback.
+18. Cloud-sync ütközés kezelése.
+19. Log tömörítés és retention policy.
+20. Path traversal guard (ne írjon tiltott könyvtárba).
+21. Backup verifikáció + rollback.
+22. Per-user és per-machine config szétválasztása.
+23. Case normalizáció (kisbetű–nagybetű).
+24. Fsync kritikus mentéseknél.
+25. Unicode fájlútvonal támogatás.
+26. Config rollback fallback.
+27. File permission drift guard.
+28. Write-behind cache guard.
+29. Disk-fragmentáció guard.
+30. Symlink és junction traversal guard.
+31. File timestamp sanity check.
+32. Roaming és Local AppData szétválasztása.
+33. Runtime read-only filesystem fallback.
+34. Tiltott fájlnév karakter guard.
+35. Maximális fájlnév hossz guard.
+36. Nem írható TEMP könyvtár fallback.
+37. Case-insensitive filesystem ütközés guard.
+38. Antivírus karantén exe/dll integrity guard.
+39. JSON float → int cast guard.
+40. Symbol collision multi-exchange guard (`BTCUSDT` ≠ `BTC/USDT`).
+41. JSON trailing comma tolerant parse.
+42. CSV BOM és newline normalizálás.
+43. Locale alapú tizedesjel import guard.
+44. Más folyamat által okozott file-lock guard.
+45. Idősor resample aliasing guard.
+46. Bitrot és silent corruption CRC check.
+47. Clock rollback file sync guard.
+48. Config merge conflict lock + diff resolution.
+
+---
+
+## 🔹 Rendszer / Windows
+
+1. Sleep és Resume után websocket reconnect.
+2. NTP sync és drift guard.
+3. Monotonic óra használata.
+4. GPU renderer fallback.
+5. UAC jogosultság ellenőrzés.
+6. Antivírus/Firewall kivétel.
+7. Single-instance lock.
+8. NTP hiány esetén safe mode.
+9. Hálózati profil váltás esetén reconnect.
+10. Watchdog auto-restart.
+11. High performance power plan kényszerítése.
+12. Timer resolution control.
+13. Process priority és MMCSS.
+14. Thermal throttling monitor.
+15. WM\_ENDSESSION state save.
+16. Ephemeral port exhaustion guard.
+17. NIC driver anomália guard.
+18. Controlled Folder Access kompatibilitás.
+19. Windows Update reboot guard.
+20. ISP NAT/CGNAT idle timeout keepalive.
+21. WSA provider és packet filter ütközés guard.
+22. CPU frequency scaling recalibration.
+23. GPU driver reset safe fallback.
+24. Modern Standby API támogatás.
+25. Battery saver és metered net adaptív keepalive.
+26. GPU driver frissítés futásidőben.
+27. Hybrid GPU váltás guard (integrált ↔ dedikált).
+28. Runtime locale váltás guard.
+29. DoH és PAC auto-váltás → stack reinit.
+30. IPv6 policy változás → reconnect.
+31. ETW és PerfCounter hiány esetén telemetria disable.
+32. Time zone váltás futás közben guard.
+33. Group Policy live változás guard (proxy/DNS/Firewall).
+34. Hibernate ↔ Sleep váltás külön reconnect út.
+35. System clock kézi állítás monotonic fallback.
+36. Credential Manager policy tiltás fallback.
+37. TLS cipher suite és verzió policy váltás guard.
+38. OEM power manager override guard.
+39. Windows Insider build inkompatibilitás esetén safe mode.
+40. Antivirus false positive esetén self-repair.
+41. GPU TDR registry tweak incompatibility guard.
+
+## 🔹 Biztonság
+
+1. API kulcs biztonságos tárolása (Windows DPAPI vagy titkosított vault).
+2. API kulcsok in-memory redaction (ne legyen olvasható debugban vagy dumpban).
+3. TLS tanúsítvány teljes körű ellenőrzése (CN, SAN, lánc).
+4. Demo → Live váltás dupla megerősítéssel.
+5. API permission check – ne használjon több jogot a szükségesnél.
+6. Crash dump redakció – érzékeny adatok törlése.
+7. Clipboard védelem – ne másolódjanak ki érzékeny adatok.
+8. Kódszignó és SmartScreen kompatibilitás.
+9. IP whitelist és kétfaktoros hitelesítés támogatás.
+10. Testnet és Mainnet környezet szigorú szétválasztása.
+11. DLL hijacking védelem.
+12. Supply-chain védelem – hash/SBOM ellenőrzés.
+13. Least privilege – csak kereskedési jog, withdrawal tiltva.
+14. Key rotation támogatás.
+15. Secure memory wipe (pl. kulcsok felülírása felszabadítás előtt).
+16. HTTP log redaction – ne kerüljön API key logba.
+17. Telegram anti-spam guard.
+18. Screen-capture szivárgás elleni védelem.
+19. Named pipe és IPC ACL szigorítás.
+20. Crash report PII scrub.
+21. IPC fuzzing elleni védelem.
+22. ASLR, CFG és DEP build flags bekapcsolva.
+23. Debug interface fail-closed (ne lehessen kihasználni).
+24. Clipboard hijack elleni védelem.
+25. Side-channel elleni védelem (időzítés, cache).
+26. Kriptográfiai biztonságos PRNG a tokenekhez.
+27. Dependency-confusion guard (függőségek hash ellenőrzése).
+28. Environment variable injection guard.
+29. Memóriadump policy scrub (érzékeny mezők törlése).
+30. OCSP/CRL reachability guard (ha cert ellenőrzés nem megy).
+31. TPM/Windows Hello kulcstár támogatás.
+32. Error timing side-channel guard (minden hibára azonos időben reagál).
+33. Offline backup file encryption.
+34. DLL search order current-directory tiltása (safe DLL search mode).
+35. Zip-slip unpack guard (plugin és frissítés csomagok kibontásánál).
+36. SSRF elleni védelem proxy config manipuláció ellen.
+37. Szolgáltatás-telepítés LPE (Local Privilege Escalation) guard.
+38. Lockscreen screenshot adatvédelmi guard (érzékeny ablak elrejtése).
+39. API kulcs leak crash dialogban redaction.
+40. Fileless malware injection (DLL hollowing) elleni védelem.
+41. Clipboard chain hijack guard (más app ne írja felül).
+
+## 🔹 Backtest / Szimuláció
+
+1. Look-ahead bias guard – ne lássa előre a jövőt.
+2. Survivorship bias guard – delistelt instrumentumokat is tartalmazza.
+3. Commission, funding és spread modellezése.
+4. Latency és slippage emuláció.
+5. Paraméterkeresés statisztikai korrekció.
+6. Determinista futás több szálon.
+7. Multi-source data támogatás.
+8. Delist bias guard – delistelt coinok ne tűnjenek el.
+9. Bid-ask bounce szimuláció.
+10. Trade-book timestamp illesztés.
+11. Hiányzó gyertyák imputálása.
+12. Walk-forward validáció.
+13. Bar-close alignment.
+14. Időzóna egységesítés.
+15. Parser fuzz teszt.
+16. Non-time chart (Renko/Heikin Ashi) kezelése.
+17. Symbol split és merge normalizálása.
+18. Catch-up mód hosszú kiesés után.
+19. Time-travel bug guard.
+20. Exchange maintenance gap jelölése.
+21. Maker és Taker fee split kezelése.
+22. PnL currency normalizáció.
+23. Symbol rename historikus adatban.
+24. Latency skew normalizáció.
+25. Param space explosion guard.
+26. FX carry/swap és crypto borrow díj modellezése.
+27. Perpetual funding alignment.
+28. Futures roll handling.
+29. RNG seed isolation modulonként.
+30. Funding boundary duplikáció guard.
+31. Kline „ragasztás” multi-source guard.
+32. Survivorship bias cross-asset guard.
+33. Non-trading day kezelése – crypto nonstop, forex szünetek.
+34. Funding rate előreismertség bias guard.
+35. Historikus fee tier drift guard.
+36. Likvidációs díj modellezés.
+37. Wallet constraint és margin lock modellezés.
+38. Order queue prioritás hatás modellezése.
+39. Stablecoin survivorship bias guard (pl. UST összeomlás).
+40. Data vendor timezone drift guard.
+41. Synthetic tick duplication clamp.
+
+## 🔹 Telemetria / Megfigyelhetőség
+
+1. Health-panel – valós idejű állapotjelző dashboard.
+2. Dead-letter queue – eldobott üzenetek külön kezelése.
+3. Watchdog hiszterézis – ne riasztson túl gyakran apró hibákra.
+4. Alert storm limit – egyszerre sok riasztás blokkolása.
+5. SLA metrikák (átlag, p95, p99 latency, rendelkezésre állás).
+6. Alert eszkaláció – ha nincs reakció, szintet lép.
+7. Panic button flat-all – minden pozíció zárása egy gombbal.
+8. Counter wrap guard – számlálók túlcsordulása ellen védelem.
+9. Trace ID lifecycle – minden hívás láncolva azonosítható legyen.
+10. Strukturált log JSON formátumban.
+11. Anomália-detektálás metrikákban.
+12. Cold start és Warm start flag különbsége.
+13. Self-test induláskor (WS/REST/TLS/time).
+14. Partial outage detektálás.
+15. Drift alert – baseline eltolódás felismerése.
+16. Silent fail detection – pl. nincs fill → riasztás.
+17. Counter reset guard.
+18. Óra előre- vagy visszaállítás guard.
+19. Log és metrika clock desync guard.
+20. Alert fatigue guard – ne generáljon túl sok fals riasztást.
+21. Offline buffer store-and-forward.
+22. GDPR retention policy betartása.
+23. Sampling window alignment.
+24. Metrika név és label namespace guard.
+25. Trace-id collision guard.
+26. Cardinality explosion guard.
+27. Statistical noise smoothing.
+28. Crash title PII scrub.
+29. Vegyes log-időzónák normalizálása UTC-re.
+30. Multi-node clock drift guard (elosztott rendszerek).
+31. Logging recursion guard (log írás közben log hiba).
+32. Metric overflow rollover guard (64-bit counter).
+33. Telemetry endpoint offline bufferelés.
+
+## 🔹 Környezet / Függőségek / Plugin
+
+1. CRT/ABI egyezés.
+2. Statikus inicializálási sorrend guard.
+3. Memory free policy konzisztens.
+4. Hot-reload és update rollback.
+5. Installer rollback AV/file-lock esetén.
+6. OpenSSL vs SChannel egységesítés.
+7. LTO/ODR ütközés guard.
+8. ABI stabilitás pinning.
+9. VC++ Redistributable csomag jelenléte.
+10. Plugin API handshake.
+11. DLL-határ kivételátadás tiltása.
+12. Deterministic build.
+13. STL container ABI drift guard.
+14. Symbol case canonicalization.
+15. Calling convention egyezés (cdecl/stdcall).
+16. Mixed runtime libraries guard.
+17. ABI forward-compatibility guard.
+18. Code page és locale guard.
+19. Plugin search path hijack guard.
+20. Dynamic CRT mismatch guard.
+21. Plugin unload order guard.
+22. Plugin hosszú futás watchdog.
+23. Plugin sandbox (Job Object).
+24. PATH és LD\_LIBRARY\_PATH tisztítása.
+25. Plugin symlink guard.
+26. Plugin schema version drift guard.
+27. Unsigned plugin DLL tiltása.
+28. Orphan plugin process cleanup.
+29. STL verzió inkompatibilitás guard.
+30. Exception spec mismatch guard (noexcept vs throw).
+31. Allokátor mismatch guard (plugin ↔ core).
+32. Statikus vs dinamikus runtime mix guard.
+33. Cross-DLL exception wrapper requirement.
+34. Plugin ABI drift compiler version guard.
+35. Filesystem case sensitivity (WSL2, Win11) guard.
+
+## 🔹 Piaci sajátosságok
+
+1. Market halt vagy liquidity zero esetén flat-all.
+2. News vagy kalendárium idején spread guard.
+3. Weekend gap sanity check (különösen forexnél).
+4. Funding és settlement kezelése.
+5. Extrém spread esetén csak reduce-only engedélyezett.
+6. Market maker hiány guard.
+7. Cross-asset correlation guard.
+8. Non-negative ár clamp.
+9. Panic-mozgás esetén kitettség csökkentés.
+10. Flash crash / wick clamp.
+11. Funding rate spike guard.
+12. Exchange circuit breaker mapping.
+13. Post-only és reduce-only módok kezelése.
+14. Index price forrásváltás guard.
+15. Stablecoin depeg guard.
+16. Chain torlódás vagy withdrawal delay informálás.
+17. Oracle price feed drift guard.
+18. Illikvid pár „no fill” auto-cancel.
+19. Regulatory halt vagy szabályozói stop guard.
+20. Exchange API backlog delay guard.
+21. Symbol trading mode váltás guard (spot ↔ margin).
+22. Részleges karbantartás szimbólumonként guard.
+23. Exchange API bug „ghost order” auto-cancel.
+24. Illikvid coin delist spike esetén flat-all.
+25. Exotikus pár (pl. BTC/BRL) low-liquidity spread guard.
+26. Stale funding index (DeFi oracle down) hedge reduce.
+
