@@ -250,13 +250,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMarketData(symbols?: string[]): Promise<MarketData[]> {
-    let query = db.select().from(marketData);
-    
     if (symbols && symbols.length > 0) {
-      query = query.where(inArray(marketData.symbol, symbols));
+      return await db.select()
+        .from(marketData)
+        .where(inArray(marketData.symbol, symbols))
+        .orderBy(marketData.symbol);
     }
     
-    return await query.orderBy(marketData.symbol);
+    return await db.select()
+      .from(marketData)
+      .orderBy(marketData.symbol);
   }
 
   async updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void> {

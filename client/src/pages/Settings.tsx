@@ -114,6 +114,7 @@ export default function Settings() {
                         placeholder="Enter your Binance API key"
                         type="password"
                         {...field}
+                        value={field.value ?? ''}
                         data-testid="input-api-key"
                       />
                     </FormControl>
@@ -133,6 +134,7 @@ export default function Settings() {
                         placeholder="Enter your Binance API secret"
                         type="password"
                         {...field}
+                        value={field.value ?? ''}
                         data-testid="input-api-secret"
                       />
                     </FormControl>
@@ -154,7 +156,7 @@ export default function Settings() {
                     </div>
                     <FormControl>
                       <Switch
-                        checked={field.value}
+                        checked={field.value ?? false}
                         onCheckedChange={field.onChange}
                         data-testid="switch-testnet"
                       />
@@ -184,7 +186,7 @@ export default function Settings() {
                   <FormItem>
                     <FormLabel>Default Leverage</FormLabel>
                     <Select
-                      value={field.value.toString()}
+                      value={field.value?.toString() ?? '1'}
                       onValueChange={(value) => field.onChange(parseInt(value))}
                     >
                       <FormControl>
@@ -219,6 +221,7 @@ export default function Settings() {
                         step="0.1"
                         placeholder="2.0"
                         {...field}
+                        value={field.value ?? ''}
                         onChange={(e) => field.onChange(parseFloat(e.target.value))}
                         data-testid="input-risk-percent"
                       />

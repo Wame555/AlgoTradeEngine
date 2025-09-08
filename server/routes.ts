@@ -102,7 +102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Update services with new settings
       if (settings.binanceApiKey && settings.binanceApiSecret) {
-        binanceService.updateCredentials(settings.binanceApiKey, settings.binanceApiSecret, settings.isTestnet);
+        binanceService.updateCredentials(settings.binanceApiKey, settings.binanceApiSecret, settings.isTestnet ?? false);
       }
       if (settings.telegramBotToken && settings.telegramChatId) {
         telegramService.updateCredentials(settings.telegramBotToken, settings.telegramChatId);
@@ -151,8 +151,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           side: position.side,
           size: position.size,
           price: position.entryPrice,
-          stopLoss: position.stopLoss,
-          takeProfit: position.takeProfit
+          stopLoss: position.stopLoss ?? undefined,
+          takeProfit: position.takeProfit ?? undefined
         });
 
         broadcast({

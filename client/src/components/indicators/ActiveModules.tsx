@@ -64,14 +64,14 @@ export function ActiveModules() {
       
       <CardContent className="space-y-3">
         {modules.map((module, index) => (
-          <div key={module.id || index} className="space-y-2" data-testid={`module-${module.name.replace(/\s+/g, '-').toLowerCase()}`}>
+          <div key={('id' in module && module.id) || index} className="space-y-2" data-testid={`module-${module.name.replace(/\s+/g, '-').toLowerCase()}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className={`w-2 h-2 rounded-full ${getStatusColor(module.isActive)}`} />
                 <div>
                   <div className="text-sm font-medium">{module.name}</div>
-                  {module.description && (
-                    <div className="text-xs text-muted-foreground">{module.description}</div>
+                  {('description' in module && module.description) && (
+                    <div className="text-xs text-muted-foreground">{'description' in module ? module.description : ''}</div>
                   )}
                 </div>
               </div>
