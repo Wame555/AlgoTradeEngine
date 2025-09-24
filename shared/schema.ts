@@ -89,9 +89,7 @@ export const closedPositions = pgTable('closed_positions', {
   exitPx: numeric('exit_px', { precision: 18, scale: 8 }).notNull(),
   qty: numeric('qty', { precision: 18, scale: 8 }).notNull(),
   fee: numeric('fee', { precision: 18, scale: 8 }).notNull().default('0'),
-  pnlUsd: (numeric('pnl_usd', { precision: 18, scale: 8 }).generatedAlwaysAs(
-    sql`(("exit_px" - "entry_px") * (CASE WHEN "side" = 'LONG' THEN 1 ELSE -1 END) * "qty" - "fee")`
-  ) as any).stored(),
+  pnlUsd: numeric('pnl_usd', { precision: 18, scale: 8 }).default('0'),
 });
 
 // Trading signals
