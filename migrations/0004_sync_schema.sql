@@ -16,6 +16,27 @@ BEGIN
     WHERE table_schema = 'public'
       AND table_name = 'pair_timeframes'
   ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'pair_timeframes'
+        AND column_name = 'tf'
+    ) THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'pair_timeframes'
+          AND column_name = 'timeframe'
+      ) THEN
+        EXECUTE 'ALTER TABLE pair_timeframes RENAME COLUMN tf TO timeframe';
+      ELSE
+        EXECUTE 'UPDATE pair_timeframes SET timeframe = COALESCE(timeframe, tf)';
+        EXECUTE 'ALTER TABLE pair_timeframes DROP COLUMN tf';
+      END IF;
+    END IF;
+
     IF NOT EXISTS (
       SELECT 1
       FROM information_schema.columns
@@ -26,16 +47,6 @@ BEGIN
       EXECUTE 'ALTER TABLE pair_timeframes ADD COLUMN timeframe TEXT';
     END IF;
 
-    IF EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'pair_timeframes'
-        AND column_name = 'tf'
-    ) THEN
-      EXECUTE 'ALTER TABLE pair_timeframes RENAME COLUMN tf TO timeframe';
-    END IF;
-
     EXECUTE 'ALTER TABLE pair_timeframes ALTER COLUMN timeframe SET NOT NULL';
   END IF;
 END $$;
@@ -43,7 +54,12 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS pair_timeframes_symbol_timeframe_unique
   ON pair_timeframes (symbol, timeframe);
 
--- Align trading_pairs limit columns
+ALTER TABLE trading_pairs
+  ADD COLUMN IF NOT EXISTS min_qty numeric(18,8),
+  ADD COLUMN IF NOT EXISTS min_notional numeric(18,8),
+  ADD COLUMN IF NOT EXISTS step_size numeric(18,8),
+  ADD COLUMN IF NOT EXISTS tick_size numeric(18,8);
+
 DO $$
 DECLARE
   column_record RECORD;
@@ -64,11 +80,6 @@ BEGIN
       EXECUTE format(
         'ALTER TABLE trading_pairs ALTER COLUMN %I TYPE numeric(18,8) USING %I::numeric',
         column_record.column_name,
-        column_record.column_name
-      );
-    ELSE
-      EXECUTE format(
-        'ALTER TABLE trading_pairs ADD COLUMN %I numeric(18,8)',
         column_record.column_name
       );
     END IF;

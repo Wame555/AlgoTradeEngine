@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS closed_positions (
     exit_px NUMERIC(18,8) NOT NULL,
     qty NUMERIC(18,8) NOT NULL,
     fee NUMERIC(18,8) NOT NULL DEFAULT 0,
-    pnl_usd NUMERIC(18,8) GENERATED ALWAYS AS ((exit_px - entry_px) * (CASE WHEN side = 'LONG' THEN 1 ELSE -1 END) * qty - fee) STORED
+    pnl_usd NUMERIC(18,8) NOT NULL DEFAULT 0
 );
 
 DROP TABLE IF EXISTS pair_timeframes;
@@ -32,7 +32,10 @@ CREATE TABLE IF NOT EXISTS pair_timeframes (
 );
 
 ALTER TABLE trading_pairs
-    ADD COLUMN IF NOT EXISTS min_qty NUMERIC(18,8);
+    ADD COLUMN IF NOT EXISTS min_qty NUMERIC(18,8),
+    ADD COLUMN IF NOT EXISTS min_notional NUMERIC(18,8),
+    ADD COLUMN IF NOT EXISTS step_size NUMERIC(18,8),
+    ADD COLUMN IF NOT EXISTS tick_size NUMERIC(18,8);
 
 INSERT INTO indicator_configs (name, params, enabled, updated_at)
 VALUES

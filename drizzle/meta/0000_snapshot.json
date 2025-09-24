@@ -68,8 +68,8 @@
           "name": "pnl_usd",
           "type": "numeric(18, 8)",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true,
+          "default": "0"
         }
       },
       "indexes": {},

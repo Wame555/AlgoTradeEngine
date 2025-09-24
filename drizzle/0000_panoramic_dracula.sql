@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS "closed_positions" (
         "exit_px" numeric(18, 8) NOT NULL,
         "qty" numeric(18, 8) NOT NULL,
         "fee" numeric(18, 8) DEFAULT '0' NOT NULL,
-        "pnl_usd" numeric(18, 8) DEFAULT '0'
+        "pnl_usd" numeric(18, 8) DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS "signals" (
