@@ -8,28 +8,64 @@ import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useTradingPairs, useUserSettings } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
+import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
+import { PriceUpdate, TradingPair } from "@/types/trading";
 
-const tradeFormSchema = z.object({
-  symbol: z.string().min(1, "Symbol is required"),
-  side: z.enum(['LONG', 'SHORT']),
-  size: z.string().min(1, "Size is required").refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
-    message: "Size must be a positive number",
-  }),
-  leverage: z.number().min(1).max(20),
-  stopLoss: z.string().optional(),
-  takeProfit: z.string().optional(),
-});
+const tradeFormSchema = z
+  .object({
+    symbol: z.string().min(1, "Symbol is required"),
+    side: z.enum(['LONG', 'SHORT']),
+    mode: z.enum(['QTY', 'USDT']).default('QTY'),
+    size: z
+      .string()
+      .optional()
+      .refine((val) => val == null || (!isNaN(Number(val)) && Number(val) > 0), {
+        message: "Size must be a positive number",
+      }),
+    amountUsd: z
+      .string()
+      .optional()
+      .refine((val) => val == null || (!isNaN(Number(val)) && Number(val) > 0), {
+        message: "Amount must be a positive number",
+      }),
+    leverage: z.number().min(1).max(20),
+    stopLoss: z.string().optional(),
+    takeProfit: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === 'QTY') {
+      if (!data.size || Number(data.size) <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Enter a valid position size',
+          path: ['size'],
+        });
+      }
+    } else {
+      if (!data.amountUsd || Number(data.amountUsd) <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Enter a valid USDT amount',
+          path: ['amountUsd'],
+        });
+      }
+    }
+  });
 
 type TradeForm = z.infer<typeof tradeFormSchema>;
 
-export function QuickTrade() {
+interface QuickTradeProps {
+  priceData: Map<string, PriceUpdate>;
+}
+
+export function QuickTrade({ priceData }: QuickTradeProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { session } = useSession();
@@ -42,7 +78,9 @@ export function QuickTrade() {
     defaultValues: {
       symbol: '',
       side: 'LONG',
+      mode: 'QTY',
       size: '0.01',
+      amountUsd: '100',
       leverage: settings?.defaultLeverage ?? 1,
       stopLoss: '',
       takeProfit: '',
@@ -64,6 +102,23 @@ export function QuickTrade() {
     }
   }, [settings, form]);
 
+  const resolveFilters = (pair: TradingPair | undefined) => {
+    return {
+      stepSize: pair?.stepSize ? Number(pair.stepSize) : undefined,
+      minQty: pair?.minQty ? Number(pair.minQty) : undefined,
+      minNotional: pair?.minNotional ? Number(pair.minNotional) : undefined,
+    };
+  };
+
+  const getLastPrice = (symbol: string): number | null => {
+    const priceEntry = priceData.get(symbol);
+    if (!priceEntry) {
+      return null;
+    }
+    const price = Number(priceEntry.price);
+    return Number.isFinite(price) ? price : null;
+  };
+
   const createPositionMutation = useMutation({
     mutationFn: async (data: TradeForm) => {
       if (!userId) {
@@ -73,11 +128,37 @@ export function QuickTrade() {
         throw new Error('Select a symbol to trade');
       }
 
+      let sizeToUse = data.mode === 'QTY' ? data.size : undefined;
+      let amountToUse = data.mode === 'USDT' ? data.amountUsd : undefined;
+
+      if (data.mode === 'USDT') {
+        const price = getLastPrice(data.symbol);
+        if (!price) {
+          throw new Error('Live price is unavailable for the selected symbol');
+        }
+        const pairForSymbol = tradingPairs?.find((pair) => pair.symbol === data.symbol);
+        const filters = resolveFilters(pairForSymbol);
+        try {
+          const quantityResult = calculateQuantityFromUsd(Number(amountToUse), price, filters);
+          sizeToUse = quantityResult.quantity.toFixed(8);
+        } catch (error) {
+          if (error instanceof QuantityValidationError) {
+            throw new Error(error.message);
+          }
+          throw new Error('Failed to calculate order quantity');
+        }
+      }
+
+      if (!sizeToUse) {
+        throw new Error('Unable to determine position size');
+      }
+
       const positionData = {
         userId,
         symbol: data.symbol,
         side: data.side,
-        size: data.size,
+        size: sizeToUse,
+        amountUsd: amountToUse,
         entryPrice: '0',
         stopLoss: data.stopLoss || undefined,
         takeProfit: data.takeProfit || undefined,
@@ -93,12 +174,14 @@ export function QuickTrade() {
       });
       if (userId) {
         queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId, 'stats'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
       form.reset({
         symbol: tradingPairs?.[0]?.symbol ?? '',
         side: 'LONG',
+        mode: 'QTY',
         size: '0.01',
+        amountUsd: '100',
         leverage: settings?.defaultLeverage ?? 1,
         stopLoss: '',
         takeProfit: '',
@@ -141,6 +224,7 @@ export function QuickTrade() {
 
   const availablePairs = tradingPairs ?? [];
   const tradingDisabled = availablePairs.length === 0 || !userId;
+  const mode = form.watch('mode');
 
   return (
     <Card>
@@ -175,7 +259,30 @@ export function QuickTrade() {
               )}
             />
 
-            <div className="grid grid-cols-2 gap-3">
+            <FormField
+              control={form.control}
+              name="mode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Order Mode</FormLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={field.value}
+                    onValueChange={(value) => field.onChange(value || 'QTY')}
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    <ToggleGroupItem value="QTY" aria-label="Quantity mode">
+                      Qty
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="USDT" aria-label="USDT mode">
+                      USDT
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </FormItem>
+              )}
+            />
+
+            {mode === 'QTY' ? (
               <FormField
                 control={form.control}
                 name="size"
@@ -193,33 +300,51 @@ export function QuickTrade() {
                   </FormItem>
                 )}
               />
-
+            ) : (
               <FormField
                 control={form.control}
-                name="leverage"
+                name="amountUsd"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Leverage</FormLabel>
-                    <Select
-                      value={field.value.toString()}
-                      onValueChange={(value) => field.onChange(parseInt(value, 10))}
-                    >
-                      <FormControl>
-                        <SelectTrigger data-testid="select-leverage">
-                          <SelectValue placeholder="Select leverage" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {[1, 3, 5, 10, 20].map((lev) => (
-                          <SelectItem key={lev} value={lev.toString()}>{lev}x</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>Amount (USDT)</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="100"
+                        {...field}
+                        data-testid="input-amount-usd"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
+            )}
+
+            <FormField
+              control={form.control}
+              name="leverage"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Leverage</FormLabel>
+                  <Select
+                    value={field.value.toString()}
+                    onValueChange={(value) => field.onChange(parseInt(value, 10))}
+                  >
+                    <FormControl>
+                      <SelectTrigger data-testid="select-leverage">
+                        <SelectValue placeholder="Select leverage" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {[1, 3, 5, 10, 20].map((lev) => (
+                        <SelectItem key={lev} value={lev.toString()}>{lev}x</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <FormField

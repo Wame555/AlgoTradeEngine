@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,26 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useUserSettings } from "@/hooks/useTradingData";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -30,6 +50,54 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const { session } = useSession();
   const userId = session?.user.id ?? "";
+  const [isPatchDialogOpen, setIsPatchDialogOpen] = useState(false);
+  const [patchValues, setPatchValues] = useState({ initialBalance: "", feesMultiplier: "" });
+
+  const resetStatsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/account/reset");
+    },
+    onSuccess: () => {
+      toast({
+        title: "Statistics reset",
+        description: "Closed positions and indicator states have been reset.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/indicator-configs"] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/positions", userId] });
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reset account statistics",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const accountPatchMutation = useMutation({
+    mutationFn: async (payload: { initialBalance?: number; feesMultiplier?: number }) => {
+      await apiRequest("POST", "/api/account/patch", payload);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Patch applied",
+        description: "Account adjustments saved successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      setIsPatchDialogOpen(false);
+      setPatchValues({ initialBalance: "", feesMultiplier: "" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to apply account patch",
+        variant: "destructive",
+      });
+    },
+  });
 
   const form = useForm<SettingsForm>({
     resolver: zodResolver(settingsFormSchema),
@@ -60,7 +128,7 @@ export default function Settings() {
         binanceApiSecret: settings.binanceApiSecret ?? "",
         isTestnet: settings.isTestnet ?? true,
         defaultLeverage: settings.defaultLeverage ?? 1,
-        riskPercent: settings.riskPercent ?? 2,
+        riskPercent: Number(settings.riskPercent ?? 2),
         telegramBotToken: settings.telegramBotToken ?? "",
         telegramChatId: settings.telegramChatId ?? "",
       });
@@ -114,6 +182,47 @@ export default function Settings() {
     saveSettingsMutation.mutate({ ...data, userId });
   };
 
+  const handlePatchApply = () => {
+    const payload: { initialBalance?: number; feesMultiplier?: number } = {};
+
+    if (patchValues.initialBalance.trim().length > 0) {
+      const balance = Number(patchValues.initialBalance);
+      if (!Number.isFinite(balance) || balance <= 0) {
+        toast({
+          title: "Invalid value",
+          description: "Initial balance must be a positive number",
+          variant: "destructive",
+        });
+        return;
+      }
+      payload.initialBalance = balance;
+    }
+
+    if (patchValues.feesMultiplier.trim().length > 0) {
+      const multiplier = Number(patchValues.feesMultiplier);
+      if (!Number.isFinite(multiplier) || multiplier <= 0) {
+        toast({
+          title: "Invalid value",
+          description: "Fees multiplier must be greater than zero",
+          variant: "destructive",
+        });
+        return;
+      }
+      payload.feesMultiplier = multiplier;
+    }
+
+    if (!payload.initialBalance && !payload.feesMultiplier) {
+      toast({
+        title: "Missing values",
+        description: "Provide at least one field to patch.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    accountPatchMutation.mutate(payload);
+  };
+
   if (isLoading || !userId) {
     return (
       <div className="p-6">
@@ -137,6 +246,83 @@ export default function Settings() {
             Configure your trading bot and API connections
           </p>
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="destructive" disabled={resetStatsMutation.isPending}>
+              Reset Stats
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reset statistics?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will clear all closed positions and disable every indicator module. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={resetStatsMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => resetStatsMutation.mutate()}
+                disabled={resetStatsMutation.isPending}
+              >
+                {resetStatsMutation.isPending ? 'Resetting...' : 'Confirm'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <Dialog open={isPatchDialogOpen} onOpenChange={(open) => {
+          setIsPatchDialogOpen(open);
+          if (!open) {
+            setPatchValues({ initialBalance: "", feesMultiplier: "" });
+          }
+        }}>
+          <DialogTrigger asChild>
+            <Button variant="outline">Apply Account Patch</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Manual Account Patch</DialogTitle>
+              <DialogDescription>
+                Provide values to adjust the paper account. Leave a field blank to keep it unchanged.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <FormLabel>Initial Balance (USD)</FormLabel>
+                <Input
+                  type="number"
+                  placeholder="10000"
+                  value={patchValues.initialBalance}
+                  onChange={(event) => setPatchValues((prev) => ({ ...prev, initialBalance: event.target.value }))}
+                  data-testid="input-initial-balance"
+                />
+              </div>
+              <div>
+                <FormLabel>Fees Multiplier</FormLabel>
+                <Input
+                  type="number"
+                  step="0.1"
+                  placeholder="1.0"
+                  value={patchValues.feesMultiplier}
+                  onChange={(event) => setPatchValues((prev) => ({ ...prev, feesMultiplier: event.target.value }))}
+                  data-testid="input-fees-multiplier"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsPatchDialogOpen(false)} disabled={accountPatchMutation.isPending}>
+                Cancel
+              </Button>
+              <Button onClick={handlePatchApply} disabled={accountPatchMutation.isPending}>
+                {accountPatchMutation.isPending ? 'Applying...' : 'Apply Patch'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Form {...form}>

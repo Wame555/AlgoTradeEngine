@@ -71,7 +71,7 @@ export function Header({ isConnected }: HeaderProps) {
      });
      if (userId) {
        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
-       queryClient.invalidateQueries({ queryKey: ['/api/positions', userId, 'stats'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
      }
       queryClient.invalidateQueries({ queryKey: ['/api/account'] });
    },

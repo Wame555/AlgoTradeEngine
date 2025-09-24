@@ -4,17 +4,17 @@ export interface TradingPair {
   baseAsset: string;
   quoteAsset: string;
   isActive: boolean;
-  minNotional?: string;
-  stepSize?: string;
-  tickSize?: string;
+  minNotional?: string | null;
+  minQty?: string | null;
+  stepSize?: string | null;
+  tickSize?: string | null;
 }
 
 export interface PairTimeframe {
   id: string;
-  userId: string;
   symbol: string;
-  timeframes: string[];
-  updatedAt: string;
+  timeframe: string;
+  createdAt: string;
 }
 
 export interface Position {
@@ -66,13 +66,9 @@ export interface MarketData {
 
 export interface IndicatorConfig {
   id: string;
-  userId: string;
   name: string;
-  type: string;
-  parameters: any;
-  weight: number;
-  isActive: boolean;
-  createdAt: string;
+  params: Record<string, unknown>;
+  enabled: boolean;
   updatedAt: string;
 }
 
@@ -107,11 +103,12 @@ export interface AccountSnapshot {
   marginUsed: number;
 }
 
-export interface PositionStats {
+export interface StatsSummary {
   totalTrades: number;
-  winningTrades: number;
-  losingTrades: number;
-  averageProfit: number;
+  winRate: number;
+  avgRR: number;
+  totalPnl: number;
+  last30dPnl: number;
 }
 
 export interface PriceUpdate {

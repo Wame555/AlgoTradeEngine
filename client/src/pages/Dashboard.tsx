@@ -7,7 +7,7 @@ import { ActiveModules } from "@/components/indicators/ActiveModules";
 import { RecentSignals } from "@/components/signals/RecentSignals";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PriceUpdate } from "@/types/trading";
-import { usePositions, usePositionStats } from "@/hooks/useTradingData";
+import { usePositions, useStatsSummary } from "@/hooks/useTradingData";
 
 interface DashboardProps {
   priceData: Map<string, PriceUpdate>;
@@ -15,18 +15,16 @@ interface DashboardProps {
 
 export default function Dashboard({ priceData }: DashboardProps) {
   const { data: positions } = usePositions();
-  const { data: positionStats } = usePositionStats();
+  const { data: statsSummary } = useStatsSummary();
 
   const activePositions = positions?.length ?? 0;
-  const winRate = useMemo(() => {
-    if (!positionStats) return 0;
-    const totalDecided = positionStats.winningTrades + positionStats.losingTrades;
-    if (totalDecided === 0) return 0;
-    return (positionStats.winningTrades / totalDecided) * 100;
-  }, [positionStats]);
+  const winRate = statsSummary?.winRate ?? 0;
+  const totalTrades = statsSummary?.totalTrades ?? 0;
+  const totalPnl = statsSummary?.totalPnl ?? 0;
+  const last30dPnl = statsSummary?.last30dPnl ?? 0;
+  const avgRR = statsSummary?.avgRR ?? 0;
 
-  const totalTrades = positionStats?.totalTrades ?? 0;
-  const averageProfit = positionStats?.averageProfit ?? 0;
+  const winRateDisplay = useMemo(() => winRate.toFixed(1), [winRate]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -37,9 +35,11 @@ export default function Dashboard({ priceData }: DashboardProps) {
     }).format(value);
   };
 
+  const formattedTotalPnl = formatCurrency(totalPnl);
+  const formatted30dPnl = formatCurrency(last30dPnl);
+
   return (
     <div className="p-6 space-y-6">
-      {/* Statistics Overview */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4">
@@ -60,7 +60,7 @@ export default function Dashboard({ priceData }: DashboardProps) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Win Rate</p>
-                <p className="text-2xl font-bold text-green-500" data-testid="stat-win-rate">{winRate.toFixed(1)}%</p>
+                <p className="text-2xl font-bold text-green-500" data-testid="stat-win-rate">{winRateDisplay}%</p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10">
                 <Trophy className="h-6 w-6 text-green-500" />
@@ -75,6 +75,7 @@ export default function Dashboard({ priceData }: DashboardProps) {
               <div>
                 <p className="text-sm text-muted-foreground">Total Trades</p>
                 <p className="text-2xl font-bold" data-testid="stat-total-trades">{totalTrades}</p>
+                <p className="text-xs text-muted-foreground" data-testid="stat-avg-rr">Avg R/R: {avgRR.toFixed(2)}</p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-yellow-500/10">
                 <ArrowUpDown className="h-6 w-6 text-yellow-500" />
@@ -87,9 +88,15 @@ export default function Dashboard({ priceData }: DashboardProps) {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Avg Profit</p>
-                <p className={`text-2xl font-bold ${averageProfit >= 0 ? 'text-green-500' : 'text-red-500'}`} data-testid="stat-avg-profit">
-                  {formatCurrency(averageProfit)}
+                <p className="text-sm text-muted-foreground">Portfolio PnL</p>
+                <p
+                  className={`text-2xl font-bold ${totalPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}
+                  data-testid="stat-total-pnl"
+                >
+                  {formattedTotalPnl}
+                </p>
+                <p className="text-xs text-muted-foreground" data-testid="stat-30d-pnl">
+                  Last 30d: {formatted30dPnl}
                 </p>
               </div>
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10">
@@ -100,22 +107,18 @@ export default function Dashboard({ priceData }: DashboardProps) {
         </Card>
       </div>
 
-      {/* Main Dashboard Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Pairs Overview */}
         <div className="lg:col-span-2">
           <PairsOverview priceData={priceData} />
         </div>
 
-        {/* Right Panel */}
         <div className="space-y-6">
-          <QuickTrade />
+          <QuickTrade priceData={priceData} />
           <ActiveModules />
           <RecentSignals />
         </div>
       </div>
 
-      {/* Performance Chart Placeholder */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
