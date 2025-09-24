@@ -116,8 +116,38 @@ ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "exit_px";
 ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "qty";
 ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "fee";
 
-CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol_time
-  ON closed_positions(symbol, closed_at);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'idx_closed_positions_symbol_time'
+      AND indexdef NOT LIKE '%("time")%'
+  ) THEN
+    EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time';
+  END IF;
+END$$;
 
-CREATE INDEX IF NOT EXISTS idx_closed_positions_user
-  ON closed_positions(user_id);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'closed_positions'
+      AND column_name = 'time'
+  ) THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = 'idx_closed_positions_symbol_time'
+    ) THEN
+      EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
+    END IF;
+  END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user
+  ON public.closed_positions(user_id);
