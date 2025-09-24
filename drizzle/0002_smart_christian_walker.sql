@@ -1,1 +1,0 @@
-ALTER TABLE "closed_positions" ALTER COLUMN "pnl_usd" SET NOT NULL;

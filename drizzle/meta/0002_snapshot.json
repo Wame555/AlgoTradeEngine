@@ -1,6 +1,6 @@
 {
-  "id": "ff3e66c0-e894-4f1d-b0df-e0d2b6139f62",
-  "prevId": "0b919247-575e-451e-9d4b-a733d7f5e83a",
+  "id": "c528e44a-784d-417c-9e73-eb2591b99c5a",
+  "prevId": "a5aae912-01a4-49cd-b783-336d99561ebb",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -69,7 +69,7 @@
           "type": "numeric(18, 8)",
           "primaryKey": false,
           "notNull": true,
-          "default": "0"
+          "default": 0
         }
       },
       "indexes": {},
@@ -235,7 +235,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "pair_timeframes_symbol_timeframe_unique": {
+          "name": "pair_timeframes_symbol_timeframe_unique",
+          "columns": [
+            {
+              "expression": "symbol",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timeframe",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
