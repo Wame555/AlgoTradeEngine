@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   varchar,
@@ -11,124 +11,128 @@ import {
   numeric,
   real,
   uniqueIndex,
-} from 'drizzle-orm/pg-core';
-import { createInsertSchema } from 'drizzle-zod';
-import { z } from 'zod';
+} from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
 
 // User table
-export const users = pgTable('users', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  username: text('username').notNull().unique(),
-  password: text('password').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Trading pairs
-export const tradingPairs = pgTable('trading_pairs', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar('symbol', { length: 20 }).notNull().unique(),
-  baseAsset: varchar('base_asset', { length: 10 }).notNull(),
-  quoteAsset: varchar('quote_asset', { length: 10 }).notNull(),
-  isActive: boolean('is_active').default(true),
-  minNotional: numeric('min_notional', { precision: 18, scale: 8 }),
-  minQty: numeric('min_qty', { precision: 18, scale: 8 }),
-  stepSize: numeric('step_size', { precision: 18, scale: 8 }),
-  tickSize: numeric('tick_size', { precision: 18, scale: 8 }),
+export const tradingPairs = pgTable("trading_pairs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  symbol: varchar("symbol", { length: 20 }).notNull().unique(),
+  baseAsset: varchar("base_asset", { length: 10 }).notNull(),
+  quoteAsset: varchar("quote_asset", { length: 10 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  minNotional: numeric("min_notional", { precision: 18, scale: 8 }),
+  minQty: numeric("min_qty", { precision: 18, scale: 8 }),
+  stepSize: numeric("step_size", { precision: 18, scale: 8 }),
+  tickSize: numeric("tick_size", { precision: 18, scale: 8 }),
 });
 
 // User settings
-export const userSettings = pgTable('user_settings', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar('user_id').notNull().unique(),
-  telegramBotToken: text('telegram_bot_token'),
-  telegramChatId: text('telegram_chat_id'),
-  binanceApiKey: text('binance_api_key'),
-  binanceApiSecret: text('binance_api_secret'),
-  isTestnet: boolean('is_testnet').default(true),
-  defaultLeverage: integer('default_leverage').default(1),
-  riskPercent: real('risk_percent').default(2),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
+export const userSettings = pgTable("user_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  telegramBotToken: text("telegram_bot_token"),
+  telegramChatId: text("telegram_chat_id"),
+  binanceApiKey: text("binance_api_key"),
+  binanceApiSecret: text("binance_api_secret"),
+  isTestnet: boolean("is_testnet").default(true),
+  defaultLeverage: integer("default_leverage").default(1),
+  riskPercent: real("risk_percent").default(2),
+  demoEnabled: boolean("demo_enabled").default(true),
+  defaultTpPct: numeric("default_tp_pct", { precision: 5, scale: 2 }).default("1.00"),
+  defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Indicator configurations
-export const indicatorConfigs = pgTable('indicator_configs', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  name: text('name').notNull().unique(),
-  params: jsonb('params').$type<Record<string, unknown>>().default({}),
-  enabled: boolean('enabled').notNull().default(false),
-  updatedAt: timestamp('updated_at').defaultNow(),
+export const indicatorConfigs = pgTable("indicator_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Trading positions
-export const positions = pgTable('positions', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar('user_id').notNull(),
-  symbol: varchar('symbol', { length: 20 }).notNull(),
-  side: varchar('side', { length: 10 }).notNull(), // LONG, SHORT
-  size: decimal('size', { precision: 18, scale: 8 }).notNull(),
-  entryPrice: decimal('entry_price', { precision: 18, scale: 8 }).notNull(),
-  currentPrice: decimal('current_price', { precision: 18, scale: 8 }),
-  pnl: decimal('pnl', { precision: 18, scale: 8 }).default('0'),
-  stopLoss: decimal('stop_loss', { precision: 18, scale: 8 }),
-  takeProfit: decimal('take_profit', { precision: 18, scale: 8 }),
-  trailingStopPercent: numeric('trailing_stop_percent', { precision: 6, scale: 2 }),
-  status: varchar('status', { length: 20 }).default('OPEN'), // OPEN, CLOSED, PENDING
-  orderId: varchar('order_id', { length: 50 }),
-  openedAt: timestamp('opened_at').defaultNow(),
-  closedAt: timestamp('closed_at'),
+export const positions = pgTable("positions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
+  size: decimal("size", { precision: 18, scale: 8 }).notNull(),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
+  currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
+  pnl: decimal("pnl", { precision: 18, scale: 8 }).default("0"),
+  stopLoss: decimal("stop_loss", { precision: 18, scale: 8 }),
+  takeProfit: decimal("take_profit", { precision: 18, scale: 8 }),
+  trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
+  status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
+  orderId: varchar("order_id", { length: 50 }),
+  openedAt: timestamp("opened_at").defaultNow(),
+  closedAt: timestamp("closed_at"),
 });
 
 // Closed positions
-export const closedPositions = pgTable('closed_positions', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  symbol: text('symbol').notNull(),
-  side: text('side').notNull(),
-  entryTs: timestamp('entry_ts', { withTimezone: true }).notNull(),
-  exitTs: timestamp('exit_ts', { withTimezone: true }).notNull(),
-  entryPx: numeric('entry_px', { precision: 18, scale: 8 }).notNull(),
-  exitPx: numeric('exit_px', { precision: 18, scale: 8 }).notNull(),
-  qty: numeric('qty', { precision: 18, scale: 8 }).notNull(),
-  fee: numeric('fee', { precision: 18, scale: 8 }).notNull().default('0'),
-  pnlUsd: numeric('pnl_usd', { precision: 18, scale: 8 }).notNull().default(0),
+export const closedPositions = pgTable("closed_positions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  symbol: text("symbol").notNull(),
+  side: text("side").notNull(),
+  size: numeric("size", { precision: 18, scale: 8 }).notNull(),
+  entryPrice: numeric("entry_price", { precision: 18, scale: 8 }).notNull(),
+  exitPrice: numeric("exit_price", { precision: 18, scale: 8 }).notNull(),
+  feeUsd: numeric("fee_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  pnlUsd: numeric("pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
+  closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
 });
 
 // Trading signals
-export const signals = pgTable('signals', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar('symbol', { length: 20 }).notNull(),
-  timeframe: varchar('timeframe', { length: 10 }).notNull(),
-  signal: varchar('signal', { length: 10 }).notNull(), // LONG, SHORT, WAIT
-  confidence: numeric('confidence', { precision: 5, scale: 2 }).notNull(),
-  indicators: jsonb('indicators'),
-  price: decimal('price', { precision: 18, scale: 8 }).notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+export const signals = pgTable("signals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  timeframe: varchar("timeframe", { length: 10 }).notNull(),
+  signal: varchar("signal", { length: 10 }).notNull(), // LONG, SHORT, WAIT
+  confidence: numeric("confidence", { precision: 5, scale: 2 }).notNull(),
+  indicators: jsonb("indicators"),
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Pair timeframe settings
-export const pairTimeframes = pgTable('pair_timeframes', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar('symbol', { length: 20 }).notNull(),
-  timeframe: varchar('timeframe', { length: 10 }).notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+export const pairTimeframes = pgTable("pair_timeframes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  timeframe: varchar("timeframe", { length: 10 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 }, (table) => ({
-  symbolTimeframeUnique: uniqueIndex('pair_timeframes_symbol_timeframe_unique').on(
+  symbolTimeframeUnique: uniqueIndex("pair_timeframes_symbol_timeframe_unique").on(
     table.symbol,
     table.timeframe,
   ),
 }));
 
 // Market data cache
-export const marketData = pgTable('market_data', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar('symbol', { length: 20 }).notNull(),
-  timeframe: varchar('timeframe', { length: 10 }).notNull(),
-  price: decimal('price', { precision: 18, scale: 8 }).notNull(),
-  volume: decimal('volume', { precision: 18, scale: 8 }),
-  change24h: numeric('change_24h', { precision: 8, scale: 2 }),
-  high24h: decimal('high_24h', { precision: 18, scale: 8 }),
-  low24h: decimal('low_24h', { precision: 18, scale: 8 }),
-  updatedAt: timestamp('updated_at').defaultNow(),
+export const marketData = pgTable("market_data", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  timeframe: varchar("timeframe", { length: 10 }).notNull(),
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  volume: decimal("volume", { precision: 18, scale: 8 }),
+  change24h: numeric("change_24h", { precision: 8, scale: 2 }),
+  high24h: decimal("high_24h", { precision: 18, scale: 8 }),
+  low24h: decimal("low_24h", { precision: 18, scale: 8 }),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Create insert schemas
@@ -145,7 +149,7 @@ export const insertUserSettingsSchema = createInsertSchema(userSettings).omit({
 
 export const insertIndicatorConfigSchema = createInsertSchema(indicatorConfigs).omit({
   id: true,
-  updatedAt: true,
+  createdAt: true,
 });
 
 export const insertPositionSchema = createInsertSchema(positions).omit({

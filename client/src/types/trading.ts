@@ -35,6 +35,21 @@ export interface Position {
   closedAt?: string;
 }
 
+export interface ClosedPositionSummary {
+  id: string;
+  userId: string;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  size: string;
+  entryPrice: string;
+  exitPrice: string;
+  feeUsd: string;
+  pnlUsd: string;
+  pnlPct: number;
+  openedAt: string;
+  closedAt: string;
+}
+
 export interface Signal {
   id: string;
   symbol: string;
@@ -67,9 +82,8 @@ export interface MarketData {
 export interface IndicatorConfig {
   id: string;
   name: string;
-  params: Record<string, unknown>;
-  enabled: boolean;
-  updatedAt: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface UserSettings {
@@ -82,6 +96,9 @@ export interface UserSettings {
   isTestnet: boolean;
   defaultLeverage: number;
   riskPercent: number;
+  demoEnabled: boolean;
+  defaultTpPct: number;
+  defaultSlPct: number;
   createdAt: string;
   updatedAt: string;
 }

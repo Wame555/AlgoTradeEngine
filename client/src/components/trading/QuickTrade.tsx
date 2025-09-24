@@ -173,7 +173,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         variant: "default",
       });
       if (userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
         queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
       form.reset({

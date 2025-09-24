@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Settings, Activity } from "lucide-react";
+import { Plus, Trash2, Settings } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -16,111 +16,132 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useIndicators } from "@/hooks/useTradingData";
+import { useUserId } from "@/hooks/useSession";
 
-interface EditableConfig {
-  id?: string;
-  name: string;
-  enabled: boolean;
-  paramsText: string;
+function summarisePayload(payload: Record<string, unknown>): string {
+  const entries = Object.entries(payload);
+  if (entries.length === 0) {
+    return "No parameters configured";
+  }
+  const summary = entries
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+  return entries.length > summary.length ? `${summary.join(", ")}, …` : summary.join(", ");
 }
 
 export function ActiveModules() {
   const { data: configs, isLoading } = useIndicators();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const userId = useUserId();
+
+  const requestBase = userId ? `/api/indicators/configs?userId=${encodeURIComponent(userId)}` : '/api/indicators/configs';
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editableConfigs, setEditableConfigs] = useState<EditableConfig[]>([]);
+  const [name, setName] = useState("");
+  const [payloadText, setPayloadText] = useState("{\n  \"length\": 14\n}");
 
-  useEffect(() => {
-    if (!isDialogOpen && configs) {
-      setEditableConfigs(
-        configs.map((config) => ({
-          id: config.id,
-          name: config.name,
-          enabled: config.enabled,
-          paramsText: JSON.stringify(config.params ?? {}, null, 2),
-        })),
-      );
-    }
-  }, [configs, isDialogOpen]);
-
-  const activeCount = useMemo(() => configs?.filter((config) => config.enabled).length ?? 0, [configs]);
   const totalCount = configs?.length ?? 0;
+  const sortedConfigs = useMemo(() => {
+    if (!configs) return [];
+    return [...configs].sort((a, b) => a.name.localeCompare(b.name));
+  }, [configs]);
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: Array<{ name: string; enabled: boolean; params: Record<string, unknown> }>) => {
-      await apiRequest('POST', '/api/indicator-configs', { configs: payload });
+    mutationFn: async (payload: { name: string; payload: Record<string, unknown> }) => {
+      await apiRequest('POST', requestBase, payload);
     },
     onSuccess: () => {
       toast({
-        title: "Modules updated",
-        description: "Indicator configurations saved successfully",
+        title: "Configuration saved",
+        description: "Indicator configuration stored successfully",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/indicator-configs'] });
-      setIsDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['/api/indicators/configs'] });
+      setName("");
+      setPayloadText("{\n  \"length\": 14\n}");
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || 'Failed to save indicator configurations',
+        description: error.message || 'Failed to save configuration',
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const url = userId ? `/api/indicators/configs/${id}?userId=${encodeURIComponent(userId)}` : `/api/indicators/configs/${id}`;
+      await apiRequest('DELETE', url);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Configuration removed",
+        description: "Indicator configuration deleted",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/indicators/configs'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || 'Failed to delete configuration',
         variant: "destructive",
       });
     },
   });
 
   const handleSave = () => {
-    try {
-      const payload = editableConfigs.map((config) => {
-        let parsed: Record<string, unknown> = {};
-        if (config.paramsText.trim().length > 0) {
-          parsed = JSON.parse(config.paramsText);
-        }
-        return {
-          name: config.name,
-          enabled: config.enabled,
-          params: parsed,
-        };
+    if (!name.trim()) {
+      toast({
+        title: "Missing name",
+        description: "Provide a configuration name",
+        variant: "destructive",
       });
-      saveMutation.mutate(payload);
+      return;
+    }
+
+    try {
+      const parsed = payloadText.trim() ? JSON.parse(payloadText) : {};
+      if (typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Payload must be a JSON object");
+      }
+      saveMutation.mutate({ name: name.trim(), payload: parsed });
     } catch (error) {
       toast({
-        title: "Invalid parameters",
-        description: error instanceof Error ? error.message : 'Ensure parameters are valid JSON objects',
+        title: "Invalid JSON",
+        description: error instanceof Error ? error.message : 'Unable to parse payload JSON',
         variant: "destructive",
       });
     }
   };
 
-  const handleToggle = (name: string, enabled: boolean) => {
-    setEditableConfigs((prev) => prev.map((config) => (config.name === name ? { ...config, enabled } : config)));
-  };
-
-  const handleParamsChange = (name: string, value: string) => {
-    setEditableConfigs((prev) => prev.map((config) => (config.name === name ? { ...config, paramsText: value } : config)));
+  const handleDelete = (id: string) => {
+    if (deleteMutation.isPending) return;
+    deleteMutation.mutate(id);
   };
 
   const renderPlaceholder = () => (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center space-x-2">
-          <Activity className="h-5 w-5" />
-          <span>Active Modules</span>
+          <Settings className="h-5 w-5" />
+          <span>Indicator Configurations</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-          No indicator configurations have been added yet.
+          No indicator configurations available yet.
         </div>
         <div className="pt-3">
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="w-full justify-start" data-testid="button-configure-modules">
-                <Settings className="mr-2 h-4 w-4" />
-                Configure Modules
+                <Plus className="mr-2 h-4 w-4" />
+                Add configuration
               </Button>
             </DialogTrigger>
             {renderDialogContent()}
@@ -131,49 +152,68 @@ export function ActiveModules() {
   );
 
   const renderDialogContent = () => (
-    <DialogContent className="max-w-2xl">
+    <DialogContent className="max-w-3xl">
       <DialogHeader>
         <DialogTitle>Configure Indicator Modules</DialogTitle>
         <DialogDescription>
-          Enable or disable modules and adjust their parameters. Parameters are stored as JSON objects.
+          Manage indicator presets for your strategies. Provide a name and JSON payload describing the configuration.
         </DialogDescription>
       </DialogHeader>
-      <div className="space-y-4">
-        {editableConfigs.map((config) => (
-          <div key={config.name} className="rounded-md border border-border p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-semibold">{config.name}</h4>
+
+      <div className="grid gap-6 md:grid-cols-[2fr,3fr]">
+        <div className="space-y-3">
+          <Input
+            placeholder="e.g. RSI"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            data-testid="input-indicator-name"
+          />
+          <Textarea
+            value={payloadText}
+            onChange={(event) => setPayloadText(event.target.value)}
+            className="h-48 font-mono text-xs"
+            data-testid="textarea-indicator-payload"
+          />
+        </div>
+
+        <div>
+          <h4 className="mb-2 text-sm font-semibold">Existing configurations</h4>
+          <ScrollArea className="h-60 rounded-md border border-border p-3">
+            {sortedConfigs.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No configurations saved yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {sortedConfigs.map((config) => (
+                  <div key={config.id} className="rounded-md border border-border p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">{config.name}</div>
+                        <div className="text-xs text-muted-foreground">{summarisePayload(config.payload ?? {})}</div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(config.id)}
+                        disabled={deleteMutation.isPending}
+                        data-testid={`button-delete-config-${config.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-muted-foreground">Enabled</span>
-                <Switch
-                  checked={config.enabled}
-                  onCheckedChange={(checked) => handleToggle(config.name, checked)}
-                  data-testid={`switch-${config.name}`}
-                />
-              </div>
-            </div>
-            <Textarea
-              value={config.paramsText}
-              onChange={(event) => handleParamsChange(config.name, event.target.value)}
-              className="mt-3 h-32 font-mono text-xs"
-              data-testid={`textarea-${config.name}`}
-            />
-          </div>
-        ))}
-        {editableConfigs.length === 0 && (
-          <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            No configurations available.
-          </div>
-        )}
+            )}
+          </ScrollArea>
+        </div>
       </div>
+
       <DialogFooter>
         <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={saveMutation.isPending}>
           Cancel
         </Button>
         <Button onClick={handleSave} disabled={saveMutation.isPending}>
-          {saveMutation.isPending ? 'Saving...' : 'Save Changes'}
+          {saveMutation.isPending ? 'Saving…' : 'Save Changes'}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -183,11 +223,11 @@ export function ActiveModules() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Active Modules</CardTitle>
+          <CardTitle>Indicator Configurations</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-3">
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="h-6 rounded bg-muted" />
             ))}
           </div>
@@ -205,71 +245,29 @@ export function ActiveModules() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
-            <Activity className="h-5 w-5" />
-            <span>Active Modules</span>
+            <Settings className="h-5 w-5" />
+            <span>Indicator Configurations</span>
           </CardTitle>
-          <div className="text-sm text-muted-foreground">{activeCount} active of {totalCount} modules</div>
+          <div className="text-sm text-muted-foreground">{totalCount} saved configuration{totalCount !== 1 ? 's' : ''}</div>
         </CardHeader>
-
         <CardContent className="space-y-3">
-          {configs.map((config) => {
-            const paramsEntries = Object.entries(config.params ?? {});
-            const summary = paramsEntries.slice(0, 3).map(([key, value]) => `${key}: ${String(value)}`);
-            const hasMore = paramsEntries.length > summary.length;
-
-            return (
-              <div
-                key={config.id}
-                className="space-y-2"
-                data-testid={`module-${config.name.replace(/\s+/g, '-').toLowerCase()}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium">{config.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {summary.length > 0 ? summary.join(', ') : 'No parameters configured'}
-                      {hasMore ? ', …' : ''}
-                    </div>
-                  </div>
-                  <Badge variant={config.enabled ? 'default' : 'secondary'} className="text-xs">
-                    {config.enabled ? 'Enabled' : 'Disabled'}
-                  </Badge>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Updated: {new Date(config.updatedAt).toLocaleString()}
-                </div>
+          {sortedConfigs.map((config) => (
+            <div key={config.id} className="flex items-center justify-between rounded-md border border-border p-3">
+              <div>
+                <div className="text-sm font-medium">{config.name}</div>
+                <div className="text-xs text-muted-foreground">{summarisePayload(config.payload ?? {})}</div>
               </div>
-            );
-          })}
+              <Badge variant="secondary" className="text-xs">Custom</Badge>
+            </div>
+          ))}
 
           <div className="pt-3 border-t border-border">
             <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                data-testid="button-configure-modules"
-              >
-                <Settings className="mr-2 h-4 w-4" />
-                Configure Modules
+              <Button variant="outline" className="w-full justify-start" data-testid="button-configure-modules">
+                <Plus className="mr-2 h-4 w-4" />
+                Add configuration
               </Button>
             </DialogTrigger>
-          </div>
-
-          <div className="pt-3 border-t border-border">
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div>
-                <div className="text-lg font-semibold" data-testid="stat-active-modules">
-                  {activeCount}
-                </div>
-                <div className="text-xs text-muted-foreground">Active</div>
-              </div>
-              <div>
-                <div className="text-lg font-semibold" data-testid="stat-total-modules">
-                  {totalCount}
-                </div>
-                <div className="text-xs text-muted-foreground">Total</div>
-              </div>
-            </div>
           </div>
         </CardContent>
       </Card>
