@@ -46,7 +46,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
       });
       if (userId) {
         queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId, 'stats'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
     },
     onError: (error: any) => {
@@ -79,7 +79,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
       });
       if (userId) {
         queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId, 'stats'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
     },
     onError: (error: any) => {

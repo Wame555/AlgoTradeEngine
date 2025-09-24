@@ -9,37 +9,30 @@ import { PriceUpdate, SUPPORTED_TIMEFRAMES, TradingPair } from "@/types/trading"
 import { usePairTimeframes, useTradingPairs } from "@/hooks/useTradingData";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useSession } from "@/hooks/useSession";
 
 interface PairAnalysisProps {
   priceData: Map<string, PriceUpdate>;
 }
 
 export default function PairAnalysis({ priceData }: PairAnalysisProps) {
-  const { data: pairTimeframes } = usePairTimeframes();
   const { data: tradingPairs } = useTradingPairs();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { session } = useSession();
-  const userId = session?.user.id;
 
   const [selectedPair, setSelectedPair] = useState<string>('');
   const [selectedTimeframes, setSelectedTimeframes] = useState<Record<string, boolean>>({});
 
-  const sortedPairs = useMemo<TradingPair[]>(() => {
-    if (!tradingPairs) return [];
-    return [...tradingPairs].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [tradingPairs]);
+  const { data: pairTimeframes = [] } = usePairTimeframes(selectedPair || undefined);
 
   useEffect(() => {
-    if (selectedPair || sortedPairs.length === 0) return;
-    setSelectedPair(sortedPairs[0].symbol);
-  }, [sortedPairs, selectedPair]);
+    if (!selectedPair && tradingPairs && tradingPairs.length > 0) {
+      setSelectedPair(tradingPairs[0].symbol);
+    }
+  }, [tradingPairs, selectedPair]);
 
   useEffect(() => {
     if (!selectedPair) return;
-    const entry = pairTimeframes?.find((pt) => pt.symbol === selectedPair);
-    const enabledSet = new Set<string>(Array.isArray(entry?.timeframes) ? entry.timeframes : []);
+    const enabledSet = new Set<string>(Array.isArray(pairTimeframes) ? pairTimeframes : []);
     const nextState: Record<string, boolean> = {};
     SUPPORTED_TIMEFRAMES.forEach((tf) => {
       nextState[tf] = enabledSet.has(tf);
@@ -47,31 +40,32 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     setSelectedTimeframes(nextState);
   }, [pairTimeframes, selectedPair]);
 
+  const sortedPairs = useMemo<TradingPair[]>(() => {
+    if (!tradingPairs) return [];
+    return [...tradingPairs].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [tradingPairs]);
+
   const saveTimeframesMutation = useMutation({
     mutationFn: async (data: { symbol: string; timeframes: string[] }) => {
-      if (!userId) {
-        throw new Error('Missing user context');
-      }
-      await apiRequest('POST', '/api/pair-timeframes', {
-        userId,
+      await apiRequest('POST', '/api/pairs/timeframes', {
         symbol: data.symbol,
-        timeframes: data.timeframes,
+        tfs: data.timeframes,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast({
         title: "Success",
         description: "Timeframe settings saved successfully",
         variant: "default",
       });
-      if (userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/pair-timeframes', userId] });
-      }
+      queryClient.invalidateQueries({ queryKey: ['/api/pairs/timeframes', { symbol: variables.symbol }] });
     },
     onError: (error: any) => {
+      const message = typeof error?.message === 'string' ? error.message : 'Failed to save timeframe settings';
+      const statusMatch = message.match(/^\d{3}:\s*(.*)$/);
       toast({
         title: "Error",
-        description: error.message || "Failed to save timeframe settings",
+        description: statusMatch ? statusMatch[1] : message,
         variant: "destructive",
       });
     },
@@ -134,10 +128,10 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
             Configure analysis timeframes for each trading pair
           </p>
         </div>
+        <Badge variant="secondary">{activeTimeframesCount} active timeframes</Badge>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Pair Selection */}
         <Card>
           <CardHeader>
             <CardTitle>Select Pair</CardTitle>
@@ -184,7 +178,6 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
           </CardContent>
         </Card>
 
-        {/* Timeframe Configuration */}
         <Card>
           <CardHeader>
             <CardTitle>Active Timeframes</CardTitle>
@@ -198,123 +191,51 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
                 <Checkbox
                   id={`timeframe-${timeframe}`}
                   checked={selectedTimeframes[timeframe] || false}
-                  onCheckedChange={(checked) =>
-                    handleTimeframeChange(timeframe, Boolean(checked))
-                  }
-                  data-testid={`checkbox-${timeframe}`}
+                  onCheckedChange={(checked) => handleTimeframeChange(timeframe, Boolean(checked))}
                 />
-                <label
-                  htmlFor={`timeframe-${timeframe}`}
-                  className="flex-1 cursor-pointer text-sm font-medium"
-                >
+                <label htmlFor={`timeframe-${timeframe}`} className="flex-1 text-sm">
                   {timeframe}
                 </label>
-                <Badge variant="outline" className="text-xs">
-                  {timeframe === '1m' ? 'Fast'
-                   : timeframe === '1h' ? 'Medium'
-                   : timeframe === '1d' ? 'Slow' : 'Custom'}
-                </Badge>
               </div>
             ))}
-
-            <Button
-              onClick={handleSaveTimeframes}
-              disabled={saveTimeframesMutation.isPending || !userId}
-              className="mt-4 w-full"
-              data-testid="button-save-timeframes"
-            >
+            <Button onClick={handleSaveTimeframes} disabled={saveTimeframesMutation.isPending}>
               {saveTimeframesMutation.isPending ? 'Saving...' : 'Save Configuration'}
             </Button>
           </CardContent>
         </Card>
 
-        {/* Analysis Summary */}
         <Card>
           <CardHeader>
-            <CardTitle>Analysis Summary</CardTitle>
+            <CardTitle>Pair Overview</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Current analysis status for {selectedPair}
+              Recent market snapshot for {selectedPair}
             </p>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Active Timeframes</span>
-                <span className="text-sm font-medium" data-testid="active-timeframes-count">
-                  {activeTimeframesCount} of {SUPPORTED_TIMEFRAMES.length}
-                </span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Data Streams</span>
-                <span className="text-sm font-medium">
-                  {activeTimeframesCount} active
-                </span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Last Update</span>
-                <span className="text-sm font-medium">
-                  {new Date().toLocaleTimeString()}
-                </span>
-              </div>
-            </div>
-
-            <div className="border-t border-border pt-4">
-              <div className="text-sm text-muted-foreground mb-2">Quick Actions</div>
-              <div className="space-y-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => {
-                    const allEnabled = SUPPORTED_TIMEFRAMES.reduce((acc, tf) => {
-                      acc[tf] = true;
-                      return acc;
-                    }, {} as Record<string, boolean>);
-                    setSelectedTimeframes(allEnabled);
-                  }}
-                  data-testid="button-enable-all"
-                >
-                  Enable All Timeframes
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => {
-                    const defaults = { '1h': true, '4h': true, '1d': true };
-                    setSelectedTimeframes(defaults);
-                  }}
-                  data-testid="button-reset-default"
-                >
-                  Reset to Defaults
-                </Button>
-              </div>
-            </div>
+          <CardContent className="space-y-3">
+            {(() => {
+              const priceInfo = selectedPair ? getPriceInfo(selectedPair) : undefined;
+              if (!priceInfo) {
+                return <div className="text-sm text-muted-foreground">No market data available.</div>;
+              }
+              const change = parseFloat(priceInfo.change24h ?? '0');
+              return (
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Last Price</div>
+                    <div className="text-lg font-semibold">${parseFloat(priceInfo.price).toFixed(6)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">24h Change</div>
+                    <div className={`text-sm font-medium ${getChangeColor(change)}`}>
+                      {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
-
-      {/* Detailed Analysis Chart Placeholder */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Price Analysis - {selectedPair}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex h-96 items-center justify-center rounded-lg bg-muted/20" data-testid="analysis-chart">
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted text-2xl">
-                📈
-              </div>
-              <h3 className="mb-2 text-lg font-medium">Multi-Timeframe Analysis</h3>
-              <p className="text-sm text-muted-foreground">
-                Detailed price analysis across selected timeframes will be displayed here
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

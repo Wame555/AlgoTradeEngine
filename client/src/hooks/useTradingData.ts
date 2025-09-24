@@ -6,9 +6,8 @@ import {
   MarketData,
   IndicatorConfig,
   UserSettings,
-  PairTimeframe,
   AccountSnapshot,
-  PositionStats,
+  StatsSummary,
 } from '@/types/trading';
 import { useSession, useUserId } from '@/hooks/useSession';
 
@@ -50,14 +49,11 @@ export function usePositions() {
   });
 }
 
-export function usePositionStats() {
-  const userId = useUserId();
-
-  return useQuery<PositionStats>({
-    queryKey: ['/api/positions', userId, 'stats'],
-    staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
-    enabled: Boolean(userId),
+export function useStatsSummary() {
+  return useQuery<StatsSummary>({
+    queryKey: ['/api/stats/summary'],
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
 }
 
@@ -84,12 +80,9 @@ export function useSignalsBySymbol(symbol: string, limit?: number) {
 }
 
 export function useIndicators() {
-  const userId = useUserId();
-
   return useQuery<IndicatorConfig[]>({
-    queryKey: ['/api/indicators', userId],
+    queryKey: ['/api/indicator-configs'],
     staleTime: 60 * 1000,
-    enabled: Boolean(userId),
   });
 }
 
@@ -103,13 +96,15 @@ export function useUserSettings() {
   });
 }
 
-export function usePairTimeframes() {
-  const userId = useUserId();
-
-  return useQuery<PairTimeframe[]>({
-    queryKey: ['/api/pair-timeframes', userId],
+export function usePairTimeframes(symbol?: string) {
+  return useQuery<string[]>({
+    queryKey: ['/api/pairs/timeframes', { symbol }],
     staleTime: 60 * 1000,
-    enabled: Boolean(userId),
+    enabled: Boolean(symbol),
+    select: (rows: any) => {
+      if (!Array.isArray(rows)) return [];
+      return rows.map((row: any) => row.timeframe).filter(Boolean);
+    },
   });
 }
 
