@@ -10,6 +10,7 @@ import {
   jsonb,
   numeric,
   real,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { createInsertSchema } from 'drizzle-zod';
 import { z } from 'zod';
@@ -29,10 +30,10 @@ export const tradingPairs = pgTable('trading_pairs', {
   baseAsset: varchar('base_asset', { length: 10 }).notNull(),
   quoteAsset: varchar('quote_asset', { length: 10 }).notNull(),
   isActive: boolean('is_active').default(true),
-  minNotional: decimal('min_notional', { precision: 18, scale: 8 }),
-  minQty: decimal('min_qty', { precision: 18, scale: 8 }),
-  stepSize: decimal('step_size', { precision: 18, scale: 8 }),
-  tickSize: decimal('tick_size', { precision: 18, scale: 8 }),
+  minNotional: numeric('min_notional', { precision: 18, scale: 8 }),
+  minQty: numeric('min_qty', { precision: 18, scale: 8 }),
+  stepSize: numeric('step_size', { precision: 18, scale: 8 }),
+  tickSize: numeric('tick_size', { precision: 18, scale: 8 }),
 });
 
 // User settings
@@ -89,7 +90,7 @@ export const closedPositions = pgTable('closed_positions', {
   exitPx: numeric('exit_px', { precision: 18, scale: 8 }).notNull(),
   qty: numeric('qty', { precision: 18, scale: 8 }).notNull(),
   fee: numeric('fee', { precision: 18, scale: 8 }).notNull().default('0'),
-  pnlUsd: numeric('pnl_usd', { precision: 18, scale: 8 }).default('0'),
+  pnlUsd: numeric('pnl_usd', { precision: 18, scale: 8 }).notNull().default('0'),
 });
 
 // Trading signals
@@ -111,7 +112,10 @@ export const pairTimeframes = pgTable('pair_timeframes', {
   timeframe: varchar('timeframe', { length: 10 }).notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => ({
-  symbolTimeframeUnique: sql`UNIQUE (${table.symbol}, ${table.timeframe})`,
+  symbolTimeframeUnique: uniqueIndex('pair_timeframes_symbol_timeframe_unique').on(
+    table.symbol,
+    table.timeframe,
+  ),
 }));
 
 // Market data cache

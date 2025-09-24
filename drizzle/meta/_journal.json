@@ -14,6 +14,20 @@
       "when": 1758737886876,
       "tag": "0001_normalize_pair_timeframes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1758739378194,
+      "tag": "0002_smart_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1758739424703,
+      "tag": "0003_parallel_agent_brand",
+      "breakpoints": true
     }
   ]
 }
