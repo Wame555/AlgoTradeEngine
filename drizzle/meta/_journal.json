@@ -7,6 +7,13 @@
       "when": 1758737885876,
       "tag": "0000_panoramic_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1758737886876,
+      "tag": "0001_normalize_pair_timeframes",
+      "breakpoints": true
     }
   ]
 }

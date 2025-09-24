@@ -34,8 +34,8 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     if (!selectedPair) return;
     const enabledSet = new Set<string>(Array.isArray(pairTimeframes) ? pairTimeframes : []);
     const nextState: Record<string, boolean> = {};
-    SUPPORTED_TIMEFRAMES.forEach((tf) => {
-      nextState[tf] = enabledSet.has(tf);
+    SUPPORTED_TIMEFRAMES.forEach((timeframe) => {
+      nextState[timeframe] = enabledSet.has(timeframe);
     });
     setSelectedTimeframes(nextState);
   }, [pairTimeframes, selectedPair]);
@@ -49,7 +49,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     mutationFn: async (data: { symbol: string; timeframes: string[] }) => {
       await apiRequest('POST', '/api/pairs/timeframes', {
         symbol: data.symbol,
-        tfs: data.timeframes,
+        timeframes: data.timeframes,
       });
     },
     onSuccess: (_data, variables) => {
@@ -82,7 +82,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     if (!selectedPair) return;
     const enabledTimeframes = Object.entries(selectedTimeframes)
       .filter(([_, enabled]) => enabled)
-      .map(([tf]) => tf);
+      .map(([timeframe]) => timeframe);
 
     saveTimeframesMutation.mutate({
       symbol: selectedPair,
