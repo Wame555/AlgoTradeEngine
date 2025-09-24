@@ -127,8 +127,27 @@ export class DatabaseStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const [user] = await db.insert(users).values({ ...insertUser, id }).returning();
-    return user;
+    const inserted = await db
+      .insert(users)
+      .values({ ...insertUser, id })
+      .onConflictDoNothing({ target: users.username })
+      .returning();
+
+    if (inserted.length > 0) {
+      return inserted[0]!;
+    }
+
+    const [existing] = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, insertUser.username))
+      .limit(1);
+
+    if (!existing) {
+      throw new Error(`Failed to create or retrieve user with username "${insertUser.username}"`);
+    }
+
+    return existing;
   }
 
   async getUserSettings(userId: string): Promise<UserSettings | undefined> {
