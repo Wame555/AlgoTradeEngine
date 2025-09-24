@@ -1,44 +1,63 @@
--- Ensure pair_timeframes has a consistent timeframe column before creating the unique index
+-- Ensure the pair_timeframes table exists with a usable timeframe column
 DO $$
-DECLARE
-  has_tf_column boolean;
-  has_timeframe_column boolean;
 BEGIN
-  SELECT EXISTS (
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'pair_timeframes'
+  ) THEN
+    EXECUTE '
+      CREATE TABLE IF NOT EXISTS "pair_timeframes" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "symbol" text NOT NULL,
+        "timeframe" text NOT NULL,
+        "created_at" timestamp DEFAULT now()
+      )
+    ';
+  END IF;
+END
+$$;
+
+-- Guarantee that the timeframe column is present and populated
+ALTER TABLE "pair_timeframes"
+  ADD COLUMN IF NOT EXISTS "timeframe" text;
+
+DO $$
+BEGIN
+  IF EXISTS (
     SELECT 1
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'pair_timeframes'
       AND column_name = 'tf'
-  )
-  INTO has_tf_column;
+  ) THEN
+    EXECUTE 'UPDATE "pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf") WHERE "tf" IS NOT NULL';
+    EXECUTE 'ALTER TABLE "pair_timeframes" DROP COLUMN "tf"';
+  END IF;
+END
+$$;
 
-  SELECT EXISTS (
+DO $$
+DECLARE
+  has_null_timeframes boolean;
+BEGIN
+  IF EXISTS (
     SELECT 1
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'pair_timeframes'
       AND column_name = 'timeframe'
-  )
-  INTO has_timeframe_column;
-
-  IF has_tf_column THEN
-    IF has_timeframe_column THEN
-      EXECUTE 'UPDATE "pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf") WHERE "tf" IS NOT NULL';
-      EXECUTE 'ALTER TABLE "pair_timeframes" DROP COLUMN "tf"';
-    ELSE
-      EXECUTE 'ALTER TABLE "pair_timeframes" RENAME COLUMN "tf" TO "timeframe"';
-      has_timeframe_column := true;
+  ) THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM "pair_timeframes" WHERE "timeframe" IS NULL)' INTO has_null_timeframes;
+    IF NOT has_null_timeframes THEN
+      EXECUTE 'ALTER TABLE "pair_timeframes" ALTER COLUMN "timeframe" SET NOT NULL';
     END IF;
-  END IF;
-
-  IF NOT has_timeframe_column THEN
-    EXECUTE 'ALTER TABLE "pair_timeframes" ADD COLUMN "timeframe" text';
-    has_timeframe_column := true;
   END IF;
 END
 $$;
 
+-- Create the unique index only when the timeframe column is present
 DO $$
 BEGIN
   IF EXISTS (
