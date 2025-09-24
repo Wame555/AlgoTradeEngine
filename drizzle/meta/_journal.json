@@ -42,6 +42,13 @@
       "when": 1758741056959,
       "tag": "0005_resilient_pair_timeframes_trading_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1758742056959,
+      "tag": "0006_repair_pair_timeframes",
+      "breakpoints": true
     }
   ]
 }
