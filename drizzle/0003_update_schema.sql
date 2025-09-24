@@ -249,10 +249,7 @@ BEGIN
   ) THEN
     EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time';
   END IF;
-END$$;
 
-DO $$
-BEGIN
   IF EXISTS (
     SELECT 1
     FROM information_schema.columns
@@ -260,7 +257,7 @@ BEGIN
       AND table_name = 'closed_positions'
       AND column_name = 'time'
   ) THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public."closed_positions"("symbol", "time")';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
   END IF;
 END$$;
 
