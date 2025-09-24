@@ -1,38 +1,59 @@
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { PriceUpdate, SUPPORTED_TIMEFRAMES, SUPPORTED_PAIRS } from "@/types/trading";
-import { useState } from "react";
+import { PriceUpdate, SUPPORTED_TIMEFRAMES, TradingPair } from "@/types/trading";
 import { usePairTimeframes, useTradingPairs } from "@/hooks/useTradingData";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSession } from "@/hooks/useSession";
 
 interface PairAnalysisProps {
   priceData: Map<string, PriceUpdate>;
 }
-
-const MOCK_USER_ID = 'mock-user-123';
 
 export default function PairAnalysis({ priceData }: PairAnalysisProps) {
   const { data: pairTimeframes } = usePairTimeframes();
   const { data: tradingPairs } = useTradingPairs();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
-  const [selectedPair, setSelectedPair] = useState<string>(SUPPORTED_PAIRS[0]);
-  const [selectedTimeframes, setSelectedTimeframes] = useState<{ [key: string]: boolean }>(() => {
-    // Initialize with some default timeframes
-    const defaults: { [key: string]: boolean } = {};
-    ['1h', '4h', '1d'].forEach(tf => defaults[tf] = true);
-    return defaults;
-  });
+  const { session } = useSession();
+  const userId = session?.user.id;
+
+  const [selectedPair, setSelectedPair] = useState<string>('');
+  const [selectedTimeframes, setSelectedTimeframes] = useState<Record<string, boolean>>({});
+
+  const sortedPairs = useMemo<TradingPair[]>(() => {
+    if (!tradingPairs) return [];
+    return [...tradingPairs].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [tradingPairs]);
+
+  useEffect(() => {
+    if (selectedPair || sortedPairs.length === 0) return;
+    setSelectedPair(sortedPairs[0].symbol);
+  }, [sortedPairs, selectedPair]);
+
+  useEffect(() => {
+    if (!selectedPair) return;
+    const entry = pairTimeframes?.find((pt) => pt.symbol === selectedPair);
+    const enabledSet = new Set<string>(Array.isArray(entry?.timeframes) ? entry.timeframes : []);
+    const nextState: Record<string, boolean> = {};
+    SUPPORTED_TIMEFRAMES.forEach((tf) => {
+      nextState[tf] = enabledSet.has(tf);
+    });
+    setSelectedTimeframes(nextState);
+  }, [pairTimeframes, selectedPair]);
 
   const saveTimeframesMutation = useMutation({
     mutationFn: async (data: { symbol: string; timeframes: string[] }) => {
+      if (!userId) {
+        throw new Error('Missing user context');
+      }
       await apiRequest('POST', '/api/pair-timeframes', {
-        userId: MOCK_USER_ID,
+        userId,
         symbol: data.symbol,
         timeframes: data.timeframes,
       });
@@ -43,9 +64,11 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
         description: "Timeframe settings saved successfully",
         variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/pair-timeframes'] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/pair-timeframes', userId] });
+      }
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast({
         title: "Error",
         description: error.message || "Failed to save timeframe settings",
@@ -55,16 +78,17 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
   });
 
   const handleTimeframeChange = (timeframe: string, checked: boolean) => {
-    setSelectedTimeframes(prev => ({
+    setSelectedTimeframes((prev) => ({
       ...prev,
-      [timeframe]: checked
+      [timeframe]: checked,
     }));
   };
 
   const handleSaveTimeframes = () => {
+    if (!selectedPair) return;
     const enabledTimeframes = Object.entries(selectedTimeframes)
       .filter(([_, enabled]) => enabled)
-      .map(([tf, _]) => tf);
+      .map(([tf]) => tf);
 
     saveTimeframesMutation.mutate({
       symbol: selectedPair,
@@ -82,6 +106,25 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     return 'text-muted-foreground';
   };
 
+  if (sortedPairs.length === 0) {
+    return (
+      <div className="p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Pair Analysis</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              Trading pairs have not been initialised yet.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const activeTimeframesCount = Object.values(selectedTimeframes).filter(Boolean).length;
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -93,21 +136,22 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Pair Selection */}
         <Card>
           <CardHeader>
             <CardTitle>Select Pair</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {SUPPORTED_PAIRS.map((symbol) => {
+            {sortedPairs.map((pair) => {
+              const symbol = pair.symbol;
               const priceInfo = getPriceInfo(symbol);
-              const change = priceInfo ? parseFloat(priceInfo.change24h) : 0;
-              
+              const change = priceInfo ? parseFloat(priceInfo.change24h ?? '0') : 0;
+
               return (
                 <div
                   key={symbol}
-                  className={`p-3 rounded-lg cursor-pointer border transition-colors ${
+                  className={`cursor-pointer rounded-lg border p-3 transition-colors ${
                     selectedPair === symbol
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:bg-muted/50'
@@ -117,13 +161,13 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-purple-500 text-xs font-bold text-white">
                         {symbol.replace('USDT', '')}
                       </div>
                       <div>
                         <div className="font-medium">{symbol}</div>
                         <div className="text-sm text-muted-foreground">
-                          ${priceInfo ? parseFloat(priceInfo.price).toFixed(8) : 'Loading...'}
+                          {priceInfo ? `$${parseFloat(priceInfo.price).toFixed(8)}` : 'Loading...'}
                         </div>
                       </div>
                     </div>
@@ -154,29 +198,29 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
                 <Checkbox
                   id={`timeframe-${timeframe}`}
                   checked={selectedTimeframes[timeframe] || false}
-                  onCheckedChange={(checked) => 
-                    handleTimeframeChange(timeframe, checked as boolean)
+                  onCheckedChange={(checked) =>
+                    handleTimeframeChange(timeframe, Boolean(checked))
                   }
                   data-testid={`checkbox-${timeframe}`}
                 />
                 <label
                   htmlFor={`timeframe-${timeframe}`}
-                  className="text-sm font-medium cursor-pointer flex-1"
+                  className="flex-1 cursor-pointer text-sm font-medium"
                 >
                   {timeframe}
                 </label>
                 <Badge variant="outline" className="text-xs">
-                  {timeframe === '1m' ? 'Fast' :
-                   timeframe === '1h' ? 'Medium' :
-                   timeframe === '1d' ? 'Slow' : 'Custom'}
+                  {timeframe === '1m' ? 'Fast'
+                   : timeframe === '1h' ? 'Medium'
+                   : timeframe === '1d' ? 'Slow' : 'Custom'}
                 </Badge>
               </div>
             ))}
-            
-            <Button 
+
+            <Button
               onClick={handleSaveTimeframes}
-              disabled={saveTimeframesMutation.isPending}
-              className="w-full mt-4"
+              disabled={saveTimeframesMutation.isPending || !userId}
+              className="mt-4 w-full"
               data-testid="button-save-timeframes"
             >
               {saveTimeframesMutation.isPending ? 'Saving...' : 'Save Configuration'}
@@ -197,17 +241,17 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
               <div className="flex justify-between">
                 <span className="text-sm text-muted-foreground">Active Timeframes</span>
                 <span className="text-sm font-medium" data-testid="active-timeframes-count">
-                  {Object.values(selectedTimeframes).filter(Boolean).length} of {SUPPORTED_TIMEFRAMES.length}
+                  {activeTimeframesCount} of {SUPPORTED_TIMEFRAMES.length}
                 </span>
               </div>
-              
+
               <div className="flex justify-between">
                 <span className="text-sm text-muted-foreground">Data Streams</span>
                 <span className="text-sm font-medium">
-                  {Object.values(selectedTimeframes).filter(Boolean).length} active
+                  {activeTimeframesCount} active
                 </span>
               </div>
-              
+
               <div className="flex justify-between">
                 <span className="text-sm text-muted-foreground">Last Update</span>
                 <span className="text-sm font-medium">
@@ -216,7 +260,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-border">
+            <div className="border-t border-border pt-4">
               <div className="text-sm text-muted-foreground mb-2">Quick Actions</div>
               <div className="space-y-2">
                 <Button
@@ -227,7 +271,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
                     const allEnabled = SUPPORTED_TIMEFRAMES.reduce((acc, tf) => {
                       acc[tf] = true;
                       return acc;
-                    }, {} as { [key: string]: boolean });
+                    }, {} as Record<string, boolean>);
                     setSelectedTimeframes(allEnabled);
                   }}
                   data-testid="button-enable-all"
@@ -258,12 +302,12 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
           <CardTitle>Price Analysis - {selectedPair}</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-96 bg-muted/20 rounded-lg flex items-center justify-center" data-testid="analysis-chart">
+          <div className="flex h-96 items-center justify-center rounded-lg bg-muted/20" data-testid="analysis-chart">
             <div className="text-center">
-              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted text-2xl">
                 📈
               </div>
-              <h3 className="text-lg font-medium mb-2">Multi-Timeframe Analysis</h3>
+              <h3 className="mb-2 text-lg font-medium">Multi-Timeframe Analysis</h3>
               <p className="text-sm text-muted-foreground">
                 Detailed price analysis across selected timeframes will be displayed here
               </p>

@@ -27,11 +27,11 @@ const clients = new Set<WebSocket>();
 
 const broadcast = (data: any) => {
     const message = JSON.stringify(data);
-    for (const ws of clients) {
+    clients.forEach((ws) => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(message);
         }
-    }
+    });
 };
 
 wss.on("connection", (ws) => {

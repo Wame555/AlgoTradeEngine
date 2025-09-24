@@ -48,10 +48,20 @@ export interface IStorage {
 
   // Position operations
   getUserPositions(userId: string): Promise<Position[]>;
+  getPositionById(id: string): Promise<Position | undefined>;
   createPosition(position: InsertPosition): Promise<Position>;
   updatePosition(id: string, updates: Partial<Position>): Promise<Position>;
-  closePosition(id: string): Promise<Position>;
-  closeAllUserPositions(userId: string): Promise<void>;
+  closePosition(id: string, updates?: { closePrice?: string; pnl?: string }): Promise<Position>;
+  closeAllUserPositions(
+    userId: string,
+    computeUpdates?: (position: Position) => { closePrice?: string; pnl?: string }
+  ): Promise<Position[]>;
+  getUserPositionStats(userId: string): Promise<{
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    averageProfit: number;
+  }>;
 
   // Signal operations
   getRecentSignals(limit?: number): Promise<Signal[]>;
@@ -160,6 +170,11 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(positions.openedAt));
   }
 
+  async getPositionById(id: string): Promise<Position | undefined> {
+    const [position] = await db.select().from(positions).where(eq(positions.id, id)).limit(1);
+    return position;
+  }
+
   async createPosition(position: InsertPosition): Promise<Position> {
     const id = randomUUID();
     const [result] = await db
@@ -178,26 +193,104 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async closePosition(id: string): Promise<Position> {
+  async closePosition(id: string, updates: { closePrice?: string; pnl?: string } = {}): Promise<Position> {
+    const updateData: Partial<typeof positions.$inferInsert> = {
+      status: 'CLOSED',
+      closedAt: new Date(),
+    };
+
+    if (updates.closePrice !== undefined) {
+      updateData.currentPrice = updates.closePrice;
+    }
+
+    if (updates.pnl !== undefined) {
+      updateData.pnl = updates.pnl;
+    }
+
     const [result] = await db
       .update(positions)
-      .set({ 
-        status: 'CLOSED', 
-        closedAt: new Date() 
-      })
+      .set(updateData)
       .where(eq(positions.id, id))
       .returning();
     return result;
   }
 
-  async closeAllUserPositions(userId: string): Promise<void> {
-    await db
-      .update(positions)
-      .set({ 
-        status: 'CLOSED', 
-        closedAt: new Date() 
-      })
+  async closeAllUserPositions(
+    userId: string,
+    computeUpdates?: (position: Position) => { closePrice?: string; pnl?: string }
+  ): Promise<Position[]> {
+    const openPositions = await db
+      .select()
+      .from(positions)
       .where(and(eq(positions.userId, userId), eq(positions.status, 'OPEN')));
+
+    const results: Position[] = [];
+
+    for (const position of openPositions) {
+      const updates = computeUpdates ? computeUpdates(position) : {};
+      const updateData: Partial<typeof positions.$inferInsert> = {
+        status: 'CLOSED',
+        closedAt: new Date(),
+      };
+
+      if (updates?.closePrice !== undefined) {
+        updateData.currentPrice = updates.closePrice;
+      }
+
+      if (updates?.pnl !== undefined) {
+        updateData.pnl = updates.pnl;
+      }
+
+      const [result] = await db
+        .update(positions)
+        .set(updateData)
+        .where(eq(positions.id, position.id))
+        .returning();
+
+      results.push(result);
+    }
+
+    return results;
+  }
+
+  async getUserPositionStats(userId: string): Promise<{
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    averageProfit: number;
+  }> {
+    const rows = await db
+      .select()
+      .from(positions)
+      .where(eq(positions.userId, userId));
+
+    const totalTrades = rows.length;
+    let winningTrades = 0;
+    let losingTrades = 0;
+    let totalProfit = 0;
+    let closedCount = 0;
+
+    for (const row of rows) {
+      if (row.status === 'CLOSED') {
+        closedCount += 1;
+        const pnl = Number(row.pnl ?? 0);
+        totalProfit += pnl;
+        if (pnl > 0) {
+          winningTrades += 1;
+        } else if (pnl < 0) {
+          losingTrades += 1;
+        }
+      }
+    }
+
+    const averageProfit = closedCount > 0 ? totalProfit / closedCount : 0;
+
+    return {
+      totalTrades,
+      winningTrades,
+      losingTrades,
+      averageProfit,
+    };
   }
 
   async getRecentSignals(limit: number = 50): Promise<Signal[]> {

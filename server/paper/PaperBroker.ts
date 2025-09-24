@@ -30,7 +30,7 @@ export class PaperBroker implements Broker {
         const a = await this.accountRow();
         const pos = await db.select().from(paperPositions);
         const equityAdj = await this.markToMarket(pos);
-        const marginUsed = 0; // egyszerûsítve
+        const marginUsed = 0; // egyszerstve
         return {
             balance: Number(a.balance),
             equity: Number(a.balance) + equityAdj,
@@ -52,7 +52,7 @@ export class PaperBroker implements Broker {
         });
     }
 
-    async placeOrder(req: OrderRequest) {
+    async placeOrder(req: OrderRequest): Promise<{ orderId: string; fills: Fill[] }> {
         const a = await this.accountRow();
 
         const px0 = getLastPrice(req.symbol);
@@ -61,7 +61,7 @@ export class PaperBroker implements Broker {
         const bps = Number(a.slippageBps) / 1e4;
         const taker = Number(a.feeTakerBps) / 1e4;
 
-        // latency szimuláció
+        // latency szimulci
         await new Promise((r) => setTimeout(r, Number(a.latencyMs)));
 
         const signed = req.side === "BUY" ? +1 : -1;
@@ -72,7 +72,7 @@ export class PaperBroker implements Broker {
         const notional = fillPrice * qty;
         const fee = notional * taker;
 
-        // pozíció update (egyszerû átlagárasítás)
+        // pozci update (egyszer tlagrasts)
         const [pos] = await db
             .select()
             .from(paperPositions)
@@ -82,8 +82,8 @@ export class PaperBroker implements Broker {
         if (!pos || Number(pos.qty) === 0) {
             await db.insert(paperPositions).values({
                 symbol: req.symbol,
-                qty: signed * qty,
-                avgPrice: fillPrice,
+                qty: (signed * qty).toString(),
+                avgPrice: fillPrice.toString(),
             });
         } else {
             const oldQty = Number(pos.qty);
@@ -96,18 +96,18 @@ export class PaperBroker implements Broker {
 
             await db
                 .update(paperPositions)
-                .set({ qty: newQty, avgPrice: avg, updatedAt: new Date() })
+                .set({ qty: newQty.toString(), avgPrice: avg.toString(), updatedAt: new Date() })
                 .where(eq(paperPositions.symbol, req.symbol));
         }
 
-        // balance – egyszerû cash elszámolás
+        // balance  egyszer cash elszmols
         const newBalance = Number(a.balance) - notional * signed - fee;
         await db
             .update(paperAccounts)
-            .set({ balance: newBalance })
+            .set({ balance: newBalance.toString() })
             .where(eq(paperAccounts.id, a.id));
 
-        // order + trade mentés
+        // order + trade ments
         const [ord] = await db
             .insert(paperOrders)
             .values({
@@ -115,8 +115,8 @@ export class PaperBroker implements Broker {
                 symbol: req.symbol,
                 side: req.side,
                 type: req.type,
-                qty,
-                price: fillPrice,
+                qty: qty.toString(),
+                price: fillPrice.toString(),
                 status: "FILLED",
             })
             .returning();
@@ -124,9 +124,9 @@ export class PaperBroker implements Broker {
         await db.insert(paperTrades).values({
             orderId: ord.id,
             symbol: req.symbol,
-            price: fillPrice,
-            qty,
-            fee,
+            price: fillPrice.toString(),
+            qty: qty.toString(),
+            fee: fee.toString(),
         });
 
         const fill: Fill = { price: fillPrice, qty, fee, ts: Date.now() };
@@ -134,7 +134,7 @@ export class PaperBroker implements Broker {
     }
 
     async cancelOrder(): Promise<boolean> {
-        // market-only papír trade; késõbb limit/queue
+        // market-only papr trade; ksbb limit/queue
         return false;
     }
 
