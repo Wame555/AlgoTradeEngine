@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "pair_timeframes_symbol_timeframe_unique" ON "pair_timeframes" USING btree ("symbol","timeframe");
