@@ -80,7 +80,7 @@ const quickTradeSchema = insertPositionSchema
 
 const pairTimeframeRequestSchema = z.object({
   symbol: z.string().min(1, "Symbol is required"),
-  tfs: z.array(z.string().min(1)).max(12),
+  timeframes: z.array(z.string().min(1)).max(12),
 });
 
 const accountPatchSchema = z
@@ -696,7 +696,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.post("/api/pairs/timeframes", async (req, res) => {
     try {
       const payload = pairTimeframeRequestSchema.parse(req.body ?? {});
-      const rows = await storage.replacePairTimeframes(payload.symbol, payload.tfs);
+      const rows = await storage.replacePairTimeframes(payload.symbol, payload.timeframes);
       res.json(rows);
     } catch (error) {
       respondWithError(res, "POST /api/pairs/timeframes", error, "Failed to save pair timeframes");
