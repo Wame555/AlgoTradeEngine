@@ -1,8 +1,11 @@
 // server/index.ts
 import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import { setupVite, serveStatic, log } from "./vite";
 import { registerRoutes } from "./routes";
@@ -14,6 +17,7 @@ import { BinanceService } from "./services/binanceService";
 import { TelegramService } from "./services/telegramService";
 import { IndicatorService } from "./services/indicatorService";
 import { setLastPrice } from "./paper/PriceFeed";
+import { db } from "./db";
 
 // --- Express app + HTTP szerver ---
 const app = express();
@@ -47,6 +51,17 @@ wss.on("connection", (ws) => {
 // --- Indítási folyamat ---
 (async () => {
     const PORT = Number(process.env.PORT || 5000);
+
+    const migrationsFolder = path.resolve(
+        fileURLToPath(new URL("../drizzle", import.meta.url))
+    );
+    try {
+        await migrate(db, { migrationsFolder });
+        log("database migrations complete", "migrator");
+    } catch (migrationError) {
+        console.error("Database migration failed:", migrationError);
+        process.exit(1);
+    }
 
     // Broker kiválasztás (alapértelmezetten paper mód)
     const usePaper = (process.env.PAPER_TRADING ?? "true") !== "false";
