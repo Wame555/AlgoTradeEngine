@@ -16,6 +16,32 @@ import {
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
+import { getLastPrice } from "./paper/PriceFeed";
+
+const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
+const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
+
+async function ensureDefaultUser() {
+    let user = await storage.getUserByUsername(DEFAULT_SESSION_USERNAME);
+    if (!user) {
+        user = await storage.createUser({
+            username: DEFAULT_SESSION_USERNAME,
+            password: DEFAULT_SESSION_PASSWORD,
+        });
+    }
+
+    let settings = await storage.getUserSettings(user.id);
+    if (!settings) {
+        settings = await storage.upsertUserSettings({
+            userId: user.id,
+            isTestnet: true,
+            defaultLeverage: 1,
+            riskPercent: 2,
+        });
+    }
+
+    return { user, settings };
+}
 
 type Deps = {
     broker: Broker;
@@ -27,6 +53,72 @@ type Deps = {
 
 export function registerRoutes(app: Express, deps: Deps): void {
     const { broker, binanceService, telegramService, indicatorService, broadcast } = deps;
+
+    const calculateSignalForPair = async (symbol: string, timeframe: string) => {
+        const klines = await binanceService.getKlines(symbol, timeframe, 200);
+        if (!Array.isArray(klines) || klines.length === 0) {
+            return null;
+        }
+
+        const closes = klines
+            .map((kline) => parseFloat(kline[4]))
+            .filter((price) => Number.isFinite(price));
+
+        if (closes.length < 30) {
+            return null;
+        }
+
+        const indicators = {
+            RSI: indicatorService.calculateRSI(closes),
+            MACD: indicatorService.calculateMACD(closes),
+            EMA: indicatorService.calculateMA(closes, 20, 'EMA'),
+            BollingerBands: indicatorService.calculateBollingerBands(closes),
+        };
+
+        const weights = {
+            RSI: 0.3,
+            MACD: 0.3,
+            EMA: 0.2,
+            BollingerBands: 0.2,
+        };
+
+        const combined = indicatorService.combineSignals(indicators, weights);
+        const lastKline = klines[klines.length - 1];
+        const closePrice = closes[closes.length - 1];
+        const closeTime = Number(lastKline?.[6]) || Date.now();
+
+        return {
+            id: `${symbol}-${timeframe}`,
+            symbol,
+            timeframe,
+            signal: combined.signal,
+            confidence: combined.confidence,
+            indicators,
+            price: closePrice.toFixed(8),
+            createdAt: new Date(closeTime).toISOString(),
+        };
+    };
+
+    const getTimeframesForSymbol = (timeframeMap: Map<string, string[]>, symbol: string) => {
+        const configured = timeframeMap.get(symbol);
+        if (configured && configured.length > 0) {
+            return configured;
+        }
+        return ['1h'];
+    };
+
+    // ----------------
+    // Session / Users
+    // ----------------
+    app.get("/api/session", async (_req, res) => {
+        try {
+            const sessionData = await ensureDefaultUser();
+            res.json(sessionData);
+        } catch (e) {
+            console.error("GET /api/session error:", e);
+            res.status(500).json({ message: "Failed to initialise session" });
+        }
+    });
 
     // ----------------------------
     // Account (paper trading) API
@@ -43,10 +135,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
     app.post("/api/account/reset", async (_req, res) => {
         try {
-            // reset balance + pozíciók törlése
             await db.delete(paperAccounts);
             await db.insert(paperAccounts).values({ balance: "10000" });
-            // ha külön táblád van poziknak a paper réteghez, ott is resetelj
             res.json({ ok: true });
         } catch (e) {
             console.error("POST /api/account/reset error:", e);
@@ -152,11 +242,21 @@ export function registerRoutes(app: Express, deps: Deps): void {
         }
     });
 
+    app.get("/api/positions/:userId/stats", async (req, res) => {
+        try {
+            const { userId } = req.params;
+            const stats = await storage.getUserPositionStats(userId);
+            res.json(stats);
+        } catch (e) {
+            console.error("GET /api/positions/:userId/stats error:", e);
+            res.status(500).json({ message: "Failed to fetch position statistics" });
+        }
+    });
+
     app.post("/api/positions", async (req, res) => {
         try {
             const position = insertPositionSchema.parse(req.body);
 
-            // paper/live egységesen a brokeren keresztül
             const side = position.side === "LONG" ? "BUY" : "SELL";
             const qty = parseFloat(position.size);
             const order = await broker.placeOrder({
@@ -170,10 +270,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
                 return res.status(400).json({ message: "Failed to execute trade" });
             }
 
-            // entryPrice a legelső fill ára
-            const entry = order.fills?.[0]?.price ?? position.entryPrice;
+            const entryFill = order.fills?.[0]?.price;
+            const entryPrice = entryFill != null ? entryFill.toString() : position.entryPrice;
             position.orderId = order.orderId;
-            position.entryPrice = entry;
+            position.entryPrice = entryPrice;
+            position.currentPrice = entryPrice;
 
             const result = await storage.createPosition(position);
 
@@ -212,12 +313,27 @@ export function registerRoutes(app: Express, deps: Deps): void {
     app.delete("/api/positions/:id", async (req, res) => {
         try {
             const { id } = req.params;
-            const position = await storage.closePosition(id);
+            const position = await storage.getPositionById(id);
+            if (!position) {
+                return res.status(404).json({ message: "Position not found" });
+            }
 
-            // ha valódi order lenne, itt lehetne cancel/close a brókeren
-            // (paper módban nincs külön futó nyitott order)
-            broadcast({ type: "position_closed", data: position });
-            res.json(position);
+            const lastPrice = getLastPrice(position.symbol);
+            const fallbackPrice = Number(position.currentPrice ?? position.entryPrice);
+            const closePrice = lastPrice ?? fallbackPrice;
+            const entryPrice = Number(position.entryPrice);
+            const size = Number(position.size);
+            const pnl = position.side === 'LONG'
+                ? (closePrice - entryPrice) * size
+                : (entryPrice - closePrice) * size;
+
+            const closedPosition = await storage.closePosition(id, {
+                closePrice: closePrice.toFixed(8),
+                pnl: pnl.toFixed(8),
+            });
+
+            broadcast({ type: "position_closed", data: closedPosition });
+            res.json(closedPosition);
         } catch (e) {
             console.error("DELETE /api/positions/:id error:", e);
             res.status(500).json({ message: "Failed to close position" });
@@ -227,9 +343,26 @@ export function registerRoutes(app: Express, deps: Deps): void {
     app.post("/api/positions/:userId/close-all", async (req, res) => {
         try {
             const { userId } = req.params;
-            await storage.closeAllUserPositions(userId);
+            const closedPositions = await storage.closeAllUserPositions(userId, (position) => {
+                const lastPrice = getLastPrice(position.symbol);
+                const fallbackPrice = Number(position.currentPrice ?? position.entryPrice);
+                const closePrice = lastPrice ?? fallbackPrice;
+                const entryPrice = Number(position.entryPrice);
+                const size = Number(position.size);
+                const pnl = position.side === 'LONG'
+                    ? (closePrice - entryPrice) * size
+                    : (entryPrice - closePrice) * size;
+
+                return {
+                    closePrice: closePrice.toFixed(8),
+                    pnl: pnl.toFixed(8),
+                };
+            });
 
             await telegramService.sendNotification("🛑 All positions have been closed");
+            closedPositions.forEach((position) => {
+                broadcast({ type: "position_closed", data: position });
+            });
             broadcast({ type: "all_positions_closed", userId });
             res.json({ message: "All positions closed" });
         } catch (e) {
@@ -291,8 +424,34 @@ export function registerRoutes(app: Express, deps: Deps): void {
     // -------
     app.get("/api/signals", async (req, res) => {
         try {
-            const limit = req.query.limit ? parseInt(String(req.query.limit)) : 50;
-            const signals = await storage.getRecentSignals(limit);
+            const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
+            const userId = req.query.userId ? String(req.query.userId) : undefined;
+
+            const [pairs, pairTimeframes] = await Promise.all([
+                storage.getAllTradingPairs(),
+                userId ? storage.getUserPairTimeframes(userId) : Promise.resolve([]),
+            ]);
+
+            const timeframeMap = new Map<string, string[]>();
+            for (const row of pairTimeframes) {
+                const timeframes = Array.isArray(row.timeframes) ? row.timeframes : [];
+                timeframeMap.set(row.symbol, timeframes);
+            }
+
+            const signals = [] as any[];
+
+            outer: for (const pair of pairs) {
+                for (const timeframe of getTimeframesForSymbol(timeframeMap, pair.symbol)) {
+                    const signal = await calculateSignalForPair(pair.symbol, timeframe);
+                    if (signal) {
+                        signals.push(signal);
+                        if (signals.length >= limit) {
+                            break outer;
+                        }
+                    }
+                }
+            }
+
             res.json(signals);
         } catch (e) {
             console.error("GET /api/signals error:", e);
@@ -303,8 +462,29 @@ export function registerRoutes(app: Express, deps: Deps): void {
     app.get("/api/signals/:symbol", async (req, res) => {
         try {
             const { symbol } = req.params;
-            const limit = req.query.limit ? parseInt(String(req.query.limit)) : 20;
-            const signals = await storage.getSignalsBySymbol(symbol, limit);
+            const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+            const userId = req.query.userId ? String(req.query.userId) : undefined;
+
+            const pairTimeframes = userId
+                ? await storage.getUserPairTimeframes(userId)
+                : [];
+            const timeframeMap = new Map<string, string[]>();
+            for (const row of pairTimeframes) {
+                const timeframes = Array.isArray(row.timeframes) ? row.timeframes : [];
+                timeframeMap.set(row.symbol, timeframes);
+            }
+
+            const signals = [] as any[];
+            for (const timeframe of getTimeframesForSymbol(timeframeMap, symbol)) {
+                const signal = await calculateSignalForPair(symbol, timeframe);
+                if (signal) {
+                    signals.push(signal);
+                }
+                if (signals.length >= limit) {
+                    break;
+                }
+            }
+
             res.json(signals);
         } catch (e) {
             console.error("GET /api/signals/:symbol error:", e);

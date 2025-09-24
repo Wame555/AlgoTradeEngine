@@ -53,31 +53,28 @@ export class IndicatorService {
   }
 
   calculateMACD(prices: number[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9): IndicatorResult {
-    if (prices.length < slowPeriod) {
+    if (prices.length < slowPeriod + signalPeriod) {
       return { value: 0, signal: 'WAIT', confidence: 0 };
     }
 
     const fastEMA = this.calculateEMA(prices, fastPeriod);
     const slowEMA = this.calculateEMA(prices, slowPeriod);
-    
-    const macdLine = fastEMA[fastEMA.length - 1] - slowEMA[slowEMA.length - 1];
-    
-    // For simplicity, using a mock signal line calculation
-    const signalLine = macdLine * 0.8; // Simplified
-    
-    const histogram = macdLine - signalLine;
-    
-    let signal: 'LONG' | 'SHORT' | 'WAIT' = 'WAIT';
-    let confidence = 0;
 
-    if (histogram > 0 && macdLine > signalLine) {
+    const macdSeries = fastEMA.map((value, index) => value - slowEMA[index]);
+    const macdLine = macdSeries[macdSeries.length - 1];
+    const signalSeries = this.calculateEMA(macdSeries, signalPeriod);
+    const signalLine = signalSeries[signalSeries.length - 1];
+    const histogram = macdLine - signalLine;
+
+    let signal: 'LONG' | 'SHORT' | 'WAIT' = 'WAIT';
+    let confidence = Math.min(Math.abs(histogram) * 100, 100);
+
+    if (macdLine > signalLine && histogram > 0) {
       signal = 'LONG';
-      confidence = Math.min(Math.abs(histogram) * 100, 100);
-    } else if (histogram < 0 && macdLine < signalLine) {
+    } else if (macdLine < signalLine && histogram < 0) {
       signal = 'SHORT';
-      confidence = Math.min(Math.abs(histogram) * 100, 100);
     } else {
-      confidence = Math.abs(histogram) * 50;
+      confidence = Math.min(Math.abs(histogram) * 50, 100);
     }
 
     return { value: macdLine, signal, confidence };
@@ -202,40 +199,5 @@ export class IndicatorService {
       confidence: Math.min(maxScore, 100),
       indicators
     };
-  }
-
-  generateMockSignal(symbol: string): CombinedSignal {
-    // Generate realistic mock signals for demonstration
-    const indicators: { [key: string]: IndicatorResult } = {
-      RSI: {
-        value: 30 + Math.random() * 40,
-        signal: Math.random() > 0.5 ? 'LONG' : 'SHORT',
-        confidence: 50 + Math.random() * 40
-      },
-      MACD: {
-        value: (Math.random() - 0.5) * 2,
-        signal: Math.random() > 0.6 ? 'LONG' : Math.random() > 0.3 ? 'SHORT' : 'WAIT',
-        confidence: 40 + Math.random() * 50
-      },
-      MA: {
-        value: 100 + Math.random() * 50,
-        signal: Math.random() > 0.4 ? 'LONG' : 'SHORT',
-        confidence: 30 + Math.random() * 60
-      },
-      BollingerBands: {
-        value: 100 + Math.random() * 20,
-        signal: Math.random() > 0.7 ? 'LONG' : Math.random() > 0.3 ? 'SHORT' : 'WAIT',
-        confidence: 20 + Math.random() * 70
-      }
-    };
-
-    const weights = {
-      RSI: 0.3,
-      MACD: 0.25,
-      MA: 0.25,
-      BollingerBands: 0.2
-    };
-
-    return this.combineSignals(indicators, weights);
   }
 }

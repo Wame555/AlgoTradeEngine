@@ -9,6 +9,14 @@ export interface TradingPair {
   tickSize?: string;
 }
 
+export interface PairTimeframe {
+  id: string;
+  userId: string;
+  symbol: string;
+  timeframes: string[];
+  updatedAt: string;
+}
+
 export interface Position {
   id: string;
   userId: string;
@@ -33,9 +41,15 @@ export interface Signal {
   timeframe: string;
   signal: 'LONG' | 'SHORT' | 'WAIT';
   confidence: number;
-  indicators: any;
+  indicators: Record<string, IndicatorBreakdown>;
   price: string;
   createdAt: string;
+}
+
+export interface IndicatorBreakdown {
+  value: number;
+  signal: 'LONG' | 'SHORT' | 'WAIT';
+  confidence: number;
 }
 
 export interface MarketData {
@@ -76,13 +90,37 @@ export interface UserSettings {
   updatedAt: string;
 }
 
+export interface User {
+  id: string;
+  username: string;
+  createdAt: string;
+}
+
+export interface SessionData {
+  user: User;
+  settings: UserSettings | null;
+}
+
+export interface AccountSnapshot {
+  balance: number;
+  equity: number;
+  marginUsed: number;
+}
+
+export interface PositionStats {
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  averageProfit: number;
+}
+
 export interface PriceUpdate {
   symbol: string;
   price: string;
-  change24h: string;
-  volume24h: string;
-  high24h: string;
-  low24h: string;
+  change24h?: string;
+  volume24h?: string;
+  high24h?: string;
+  low24h?: string;
 }
 
 export interface WebSocketMessage {
@@ -92,8 +130,3 @@ export interface WebSocketMessage {
 }
 
 export const SUPPORTED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
-export const SUPPORTED_PAIRS = [
-  'ETHUSDT', 'BTCUSDT', 'AVAXUSDT', 'SOLUSDT', 'DOTUSDT', 
-  'ENJUSDT', 'ADAUSDT', 'GALAUSDT', 'EGLDUSDT', 'SNXUSDT', 
-  'MANAUSDT', 'ARPAUSDT', 'SEIUSDT', 'ACHUSDT', 'ATOMUSDT'
-];

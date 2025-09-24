@@ -1,25 +1,25 @@
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useUserSettings } from "@/hooks/useTradingData";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { insertUserSettingsSchema } from "@shared/schema";
-import { z } from "zod";
 import { Save, Key, Shield, DollarSign } from "lucide-react";
-
-const MOCK_USER_ID = 'mock-user-123';
+import { useSession } from "@/hooks/useSession";
 
 const settingsFormSchema = insertUserSettingsSchema.extend({
-  userId: z.string().default(MOCK_USER_ID),
+  userId: z.string(),
 });
 
 type SettingsForm = z.infer<typeof settingsFormSchema>;
@@ -28,22 +28,59 @@ export default function Settings() {
   const { data: settings, isLoading } = useUserSettings();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { session } = useSession();
+  const userId = session?.user.id ?? "";
 
   const form = useForm<SettingsForm>({
     resolver: zodResolver(settingsFormSchema),
     defaultValues: {
-      userId: MOCK_USER_ID,
-      binanceApiKey: settings?.binanceApiKey || '',
-      binanceApiSecret: settings?.binanceApiSecret || '',
-      isTestnet: settings?.isTestnet ?? true,
-      defaultLeverage: settings?.defaultLeverage || 1,
-      riskPercent: settings?.riskPercent || 2,
+      userId,
+      binanceApiKey: "",
+      binanceApiSecret: "",
+      isTestnet: true,
+      defaultLeverage: 1,
+      riskPercent: 2,
+      telegramBotToken: "",
+      telegramChatId: "",
     },
   });
 
+  useEffect(() => {
+    if (!userId) return;
+    form.setValue("userId", userId);
+  }, [userId, form]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    if (settings) {
+      form.reset({
+        userId,
+        binanceApiKey: settings.binanceApiKey ?? "",
+        binanceApiSecret: settings.binanceApiSecret ?? "",
+        isTestnet: settings.isTestnet ?? true,
+        defaultLeverage: settings.defaultLeverage ?? 1,
+        riskPercent: settings.riskPercent ?? 2,
+        telegramBotToken: settings.telegramBotToken ?? "",
+        telegramChatId: settings.telegramChatId ?? "",
+      });
+    } else {
+      form.reset({
+        userId,
+        binanceApiKey: "",
+        binanceApiSecret: "",
+        isTestnet: true,
+        defaultLeverage: 1,
+        riskPercent: 2,
+        telegramBotToken: "",
+        telegramChatId: "",
+      });
+    }
+  }, [settings, userId, form]);
+
   const saveSettingsMutation = useMutation({
     mutationFn: async (data: SettingsForm) => {
-      await apiRequest('POST', '/api/settings', data);
+      await apiRequest("POST", "/api/settings", data);
     },
     onSuccess: () => {
       toast({
@@ -51,9 +88,11 @@ export default function Settings() {
         description: "Settings saved successfully",
         variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/settings", userId] });
+      }
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast({
         title: "Error",
         description: error.message || "Failed to save settings",
@@ -63,15 +102,24 @@ export default function Settings() {
   });
 
   const onSubmit = (data: SettingsForm) => {
-    saveSettingsMutation.mutate(data);
+    if (!userId) {
+      toast({
+        title: "Missing user",
+        description: "User session is not ready yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    saveSettingsMutation.mutate({ ...data, userId });
   };
 
-  if (isLoading) {
+  if (isLoading || !userId) {
     return (
       <div className="p-6">
         <div className="animate-pulse space-y-6">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-48 bg-muted rounded-lg" />
+            <div key={i} className="h-48 rounded-lg bg-muted" />
           ))}
         </div>
       </div>
@@ -82,7 +130,9 @@ export default function Settings() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold" data-testid="settings-title">Settings</h2>
+          <h2 className="text-2xl font-bold" data-testid="settings-title">
+            Settings
+          </h2>
           <p className="text-muted-foreground">
             Configure your trading bot and API connections
           </p>
@@ -95,7 +145,7 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <Key className="w-5 h-5" />
+                <Key className="h-5 w-5" />
                 <span>Binance API Configuration</span>
               </CardTitle>
               <p className="text-sm text-muted-foreground">
@@ -113,8 +163,11 @@ export default function Settings() {
                       <Input
                         placeholder="Enter your Binance API key"
                         type="password"
-                        {...field}
-                        value={field.value ?? ''}
+                        name={field.name}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
                         data-testid="input-api-key"
                       />
                     </FormControl>
@@ -133,8 +186,11 @@ export default function Settings() {
                       <Input
                         placeholder="Enter your Binance API secret"
                         type="password"
-                        {...field}
-                        value={field.value ?? ''}
+                        name={field.name}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
                         data-testid="input-api-secret"
                       />
                     </FormControl>
@@ -171,7 +227,7 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <Shield className="w-5 h-5" />
+                <Shield className="h-5 w-5" />
                 <span>Risk Management</span>
               </CardTitle>
               <p className="text-sm text-muted-foreground">
@@ -186,8 +242,8 @@ export default function Settings() {
                   <FormItem>
                     <FormLabel>Default Leverage</FormLabel>
                     <Select
-                      value={field.value?.toString() ?? '1'}
-                      onValueChange={(value) => field.onChange(parseInt(value))}
+                      value={field.value?.toString() ?? "1"}
+                      onValueChange={(value) => field.onChange(parseInt(value, 10))}
                     >
                       <FormControl>
                         <SelectTrigger data-testid="select-leverage">
@@ -212,23 +268,20 @@ export default function Settings() {
                 name="riskPercent"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Risk Per Trade (%)</FormLabel>
+                    <FormLabel>Risk per Trade (%)</FormLabel>
                     <FormControl>
                       <Input
+                        placeholder="2"
                         type="number"
-                        min="0.1"
-                        max="10"
                         step="0.1"
-                        placeholder="2.0"
-                        {...field}
-                        value={field.value ?? ''}
-                        onChange={(e) => field.onChange(parseFloat(e.target.value))}
+                        name={field.name}
+                        value={field.value?.toString() ?? ""}
+                        onChange={(event) => field.onChange(Number(event.target.value))}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
                         data-testid="input-risk-percent"
                       />
                     </FormControl>
-                    <div className="text-sm text-muted-foreground">
-                      Maximum percentage of account balance to risk per trade
-                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -236,83 +289,75 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          {/* Trading Preferences */}
+          {/* Telegram */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <DollarSign className="w-5 h-5" />
-                <span>Trading Preferences</span>
+                <DollarSign className="h-5 w-5" />
+                <span>Telegram Notifications</span>
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Configure default trading behavior and preferences
+                Configure Telegram bot credentials for notifications
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Maximum Daily Trades</Label>
-                  <Input
-                    type="number"
-                    placeholder="50"
-                    min="1"
-                    max="1000"
-                    data-testid="input-max-trades"
-                  />
-                  <div className="text-sm text-muted-foreground">
-                    Maximum number of trades per day
-                  </div>
-                </div>
+              <FormField
+                control={form.control}
+                name="telegramBotToken"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Bot Token</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter your Telegram bot token"
+                        name={field.name}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
+                        data-testid="input-telegram-bot-token"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-                <div className="space-y-2">
-                  <Label>Stop Loss Default (%)</Label>
-                  <Input
-                    type="number"
-                    placeholder="5.0"
-                    min="0.1"
-                    max="50"
-                    step="0.1"
-                    data-testid="input-stop-loss"
-                  />
-                  <div className="text-sm text-muted-foreground">
-                    Default stop loss percentage
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Auto-trading</Label>
-                  <div className="text-sm text-muted-foreground">
-                    Enable automatic trade execution based on signals
-                  </div>
-                </div>
-                <Switch data-testid="switch-auto-trading" />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Emergency Stop</Label>
-                  <div className="text-sm text-muted-foreground">
-                    Enable emergency stop on significant losses
-                  </div>
-                </div>
-                <Switch data-testid="switch-emergency-stop" />
-              </div>
+              <FormField
+                control={form.control}
+                name="telegramChatId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Chat ID</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter your Telegram chat ID"
+                        name={field.name}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
+                        data-testid="input-telegram-chat-id"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </CardContent>
           </Card>
 
-          {/* Save Button */}
+          <Separator />
+
           <div className="flex justify-end">
             <Button
               type="submit"
               disabled={saveSettingsMutation.isPending}
-              className="min-w-[120px]"
+              className="flex items-center"
               data-testid="button-save-settings"
             >
-              <Save className="w-4 h-4 mr-2" />
-              {saveSettingsMutation.isPending ? 'Saving...' : 'Save Settings'}
+              <Save className="mr-2 h-4 w-4" />
+              {saveSettingsMutation.isPending ? "Saving..." : "Save Settings"}
             </Button>
           </div>
         </form>

@@ -1,21 +1,20 @@
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useUserSettings } from "@/hooks/useTradingData";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
 import { MessageCircle, Send, CheckCircle, AlertCircle, Info } from "lucide-react";
-import { useState } from "react";
-
-const MOCK_USER_ID = 'mock-user-123';
+import { useSession } from "@/hooks/useSession";
 
 const telegramFormSchema = z.object({
   telegramBotToken: z.string().min(1, "Bot token is required"),
@@ -29,19 +28,33 @@ export default function TelegramSetup() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const { session } = useSession();
+  const userId = session?.user.id;
 
   const form = useForm<TelegramForm>({
     resolver: zodResolver(telegramFormSchema),
     defaultValues: {
-      telegramBotToken: settings?.telegramBotToken || '',
-      telegramChatId: settings?.telegramChatId || '',
+      telegramBotToken: '',
+      telegramChatId: '',
     },
   });
 
+  useEffect(() => {
+    if (settings) {
+      form.reset({
+        telegramBotToken: settings.telegramBotToken ?? '',
+        telegramChatId: settings.telegramChatId ?? '',
+      });
+    }
+  }, [settings, form]);
+
   const saveSettingsMutation = useMutation({
     mutationFn: async (data: TelegramForm) => {
+      if (!userId) {
+        throw new Error('Missing user context');
+      }
       await apiRequest('POST', '/api/settings', {
-        userId: MOCK_USER_ID,
+        userId,
         ...data,
       });
     },
@@ -51,9 +64,11 @@ export default function TelegramSetup() {
         description: "Telegram settings saved successfully",
         variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/settings', userId] });
+      }
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast({
         title: "Error",
         description: error.message || "Failed to save Telegram settings",
@@ -84,7 +99,7 @@ export default function TelegramSetup() {
         });
       }
     },
-    onError: (error) => {
+    onError: (error: any) => {
       setTestStatus('error');
       toast({
         title: "Error",
@@ -95,6 +110,14 @@ export default function TelegramSetup() {
   });
 
   const onSubmit = (data: TelegramForm) => {
+    if (!userId) {
+      toast({
+        title: "Missing user",
+        description: "User session is not ready yet.",
+        variant: "destructive",
+      });
+      return;
+    }
     saveSettingsMutation.mutate(data);
   };
 
@@ -108,7 +131,7 @@ export default function TelegramSetup() {
       });
       return;
     }
-    
+
     setTestStatus('testing');
     testConnectionMutation.mutate(formData);
   };
@@ -126,12 +149,12 @@ export default function TelegramSetup() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || !userId) {
     return (
       <div className="p-6">
         <div className="animate-pulse space-y-6">
           {[1, 2].map((i) => (
-            <div key={i} className="h-48 bg-muted rounded-lg" />
+            <div key={i} className="h-48 rounded-lg bg-muted" />
           ))}
         </div>
       </div>
@@ -154,14 +177,14 @@ export default function TelegramSetup() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
-            <Info className="w-5 h-5" />
+            <Info className="h-5 w-5" />
             <span>Setup Instructions</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-3 text-sm">
             <div className="flex items-start space-x-3">
-              <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                 1
               </div>
               <div>
@@ -171,9 +194,9 @@ export default function TelegramSetup() {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex items-start space-x-3">
-              <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                 2
               </div>
               <div>
@@ -183,19 +206,31 @@ export default function TelegramSetup() {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex items-start space-x-3">
-              <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                 3
               </div>
               <div>
                 <div className="font-medium">Get Chat ID</div>
                 <div className="text-muted-foreground">
-                  Start a chat with your bot and send any message. Then visit: 
-                  <code className="mx-1 px-1 py-0.5 bg-muted rounded text-xs">
+                  Start a chat with your bot and send any message. Then visit:
+                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">
                     https://api.telegram.org/bot&lt;YOUR_BOT_TOKEN&gt;/getUpdates
                   </code>
                   and find your chat ID in the response
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-start space-x-3">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                4
+              </div>
+              <div>
+                <div className="font-medium">Test Connection</div>
+                <div className="text-muted-foreground">
+                  Use the test button below to ensure your bot can send messages to the chat ID
                 </div>
               </div>
             </div>
@@ -204,90 +239,72 @@ export default function TelegramSetup() {
       </Card>
 
       {/* Configuration Form */}
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <MessageCircle className="w-5 h-5" />
-                <span>Bot Configuration</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <FormField
-                control={form.control}
-                name="telegramBotToken"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Bot Token</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz"
-                        type="password"
-                        {...field}
-                        data-testid="input-bot-token"
-                      />
-                    </FormControl>
-                    <div className="text-sm text-muted-foreground">
-                      Your Telegram bot token from @BotFather
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <MessageCircle className="h-5 w-5" />
+            <span>Bot Configuration</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="telegramBotToken">Bot Token</Label>
+              <Input
+                id="telegramBotToken"
+                placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz"
+                {...form.register('telegramBotToken')}
+                data-testid="input-bot-token"
               />
+            </div>
 
-              <FormField
-                control={form.control}
-                name="telegramChatId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Chat ID</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="123456789"
-                        {...field}
-                        data-testid="input-chat-id"
-                      />
-                    </FormControl>
-                    <div className="text-sm text-muted-foreground">
-                      Your Telegram chat ID where notifications will be sent
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
+            <div className="space-y-2">
+              <Label htmlFor="telegramChatId">Chat ID</Label>
+              <Input
+                id="telegramChatId"
+                placeholder="123456789"
+                {...form.register('telegramChatId')}
+                data-testid="input-chat-id"
               />
+            </div>
 
-              <div className="flex space-x-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={testConnectionMutation.isPending}
-                  data-testid="button-test-connection"
-                >
-                  <Send className="w-4 h-4 mr-2" />
-                  {testConnectionMutation.isPending ? 'Testing...' : 'Test Connection'}
-                </Button>
+            <Alert variant="default">
+              <AlertDescription className="text-sm text-muted-foreground">
+                We recommend creating a dedicated chat for the bot to avoid sharing personal messages.
+              </AlertDescription>
+            </Alert>
 
-                <Button
-                  type="submit"
-                  disabled={saveSettingsMutation.isPending}
-                  data-testid="button-save-telegram"
-                >
-                  {saveSettingsMutation.isPending ? 'Saving...' : 'Save Configuration'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </form>
-      </Form>
+            <div className="flex space-x-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleTestConnection}
+                disabled={testConnectionMutation.isPending}
+                data-testid="button-test-telegram"
+              >
+                <Send className={`mr-2 h-4 w-4 ${testConnectionMutation.isPending ? 'animate-spin' : ''}`} />
+                {testConnectionMutation.isPending ? 'Testing...' : 'Test Connection'}
+              </Button>
+
+              <Button
+                type="submit"
+                disabled={saveSettingsMutation.isPending || !userId}
+                data-testid="button-save-telegram"
+              >
+                <CheckCircle className="mr-2 h-4 w-4" />
+                {saveSettingsMutation.isPending ? 'Saving...' : 'Save Settings'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       {/* Status Alerts */}
       {testStatus === 'success' && (
-        <Alert className="border-green-500/20 bg-green-500/10">
-          <CheckCircle className="h-4 w-4 text-green-500" />
-          <AlertDescription className="text-green-700 dark:text-green-400">
-            Telegram connection successful! You should have received a test message.
+        <Alert className="border-green-500/40 bg-green-500/10 text-green-600">
+          <CheckCircle className="h-4 w-4" />
+          <AlertDescription>
+            Your Telegram bot is connected and ready to send notifications.
           </AlertDescription>
         </Alert>
       )}
@@ -296,53 +313,10 @@ export default function TelegramSetup() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            Failed to connect to Telegram. Please check your bot token and chat ID.
+            Unable to connect to Telegram. Please verify your bot token and chat ID.
           </AlertDescription>
         </Alert>
       )}
-
-      {/* Notification Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Notification Settings</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Configure which events trigger Telegram notifications
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" defaultChecked className="rounded" data-testid="checkbox-trade-signals" />
-              <span>Trading Signals</span>
-            </Label>
-            
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" defaultChecked className="rounded" data-testid="checkbox-position-updates" />
-              <span>Position Updates</span>
-            </Label>
-            
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" defaultChecked className="rounded" data-testid="checkbox-profit-loss" />
-              <span>Profit/Loss Alerts</span>
-            </Label>
-            
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" defaultChecked className="rounded" data-testid="checkbox-system-alerts" />
-              <span>System Alerts</span>
-            </Label>
-            
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" className="rounded" data-testid="checkbox-daily-summary" />
-              <span>Daily Summary</span>
-            </Label>
-            
-            <Label className="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" className="rounded" data-testid="checkbox-error-alerts" />
-              <span>Error Alerts</span>
-            </Label>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
