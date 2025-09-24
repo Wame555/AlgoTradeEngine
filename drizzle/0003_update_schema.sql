@@ -67,23 +67,10 @@ BEGIN
   ALTER TABLE indicator_configs ALTER COLUMN user_id SET NOT NULL;
 END $$;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'indicator_configs_name_unique'
-  ) THEN
-    DROP INDEX indicator_configs_name_unique;
-  END IF;
-END $$;
+DROP INDEX IF EXISTS indicator_configs_name_unique;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_indicator_configs_user_name'
-  ) THEN
-    CREATE UNIQUE INDEX idx_indicator_configs_user_name ON indicator_configs(user_id, name);
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name
+  ON indicator_configs(user_id, name);
 
 -- Restructure closed_positions to new schema
 ALTER TABLE "closed_positions" ADD COLUMN IF NOT EXISTS "user_id" varchar;
@@ -129,20 +116,8 @@ ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "exit_px";
 ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "qty";
 ALTER TABLE "closed_positions" DROP COLUMN IF EXISTS "fee";
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_closed_positions_symbol_time'
-  ) THEN
-    CREATE INDEX idx_closed_positions_symbol_time ON closed_positions(symbol, closed_at);
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol_time
+  ON closed_positions(symbol, closed_at);
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_closed_positions_user'
-  ) THEN
-    CREATE INDEX idx_closed_positions_user ON closed_positions(user_id);
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_closed_positions_user
+  ON closed_positions(user_id);
