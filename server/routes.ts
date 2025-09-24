@@ -525,14 +525,31 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const rows = await db.select().from(closedPositions);
 
-      const totalTrades = rows.length;
-      const totalPnl = rows.reduce((sum, row) => sum + Number(row.pnlUsd ?? 0), 0);
-      const winningTrades = rows.filter((row) => Number(row.pnlUsd ?? 0) > 0).length;
+      const computePnlUsd = (row: typeof rows[number]) => {
+        const entryPx = Number(row.entryPx ?? 0);
+        const exitPx = Number(row.exitPx ?? 0);
+        const qty = Number(row.qty ?? 0);
+        const fee = Number(row.fee ?? 0);
+
+        if (!Number.isFinite(entryPx) || !Number.isFinite(exitPx) || !Number.isFinite(qty)) {
+          return 0;
+        }
+
+        const direction = row.side === "LONG" ? 1 : -1;
+        const pnl = (exitPx - entryPx) * direction * qty - (Number.isFinite(fee) ? fee : 0);
+        return Number.isFinite(pnl) ? pnl : 0;
+      };
+
+      const rowsWithPnl = rows.map((row) => ({ ...row, computedPnlUsd: computePnlUsd(row) }));
+
+      const totalTrades = rowsWithPnl.length;
+      const totalPnl = rowsWithPnl.reduce((sum, row) => sum + row.computedPnlUsd, 0);
+      const winningTrades = rowsWithPnl.filter((row) => row.computedPnlUsd > 0).length;
       const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
 
       let rewardSum = 0;
       let rewardCount = 0;
-      for (const row of rows) {
+      for (const row of rowsWithPnl) {
         const entryPx = Number(row.entryPx ?? 0);
         const exitPx = Number(row.exitPx ?? 0);
         if (!Number.isFinite(entryPx) || entryPx === 0) {
@@ -545,9 +562,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const avgReward = rewardCount > 0 ? rewardSum / rewardCount : 0;
 
       const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const last30dPnl = rows
+      const last30dPnl = rowsWithPnl
         .filter((row) => row.exitTs && new Date(row.exitTs) >= cutoff)
-        .reduce((sum, row) => sum + Number(row.pnlUsd ?? 0), 0);
+        .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
       res.json({
         totalTrades,
