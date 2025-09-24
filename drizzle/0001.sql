@@ -1,13 +1,13 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-CREATE TABLE IF NOT EXISTS "users" (
+CREATE TABLE IF NOT EXISTS public."users" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "username" text NOT NULL,
     "password" text NOT NULL,
     "created_at" timestamp DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS "user_settings" (
+CREATE TABLE IF NOT EXISTS public."user_settings" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "user_id" varchar NOT NULL,
     "telegram_bot_token" text,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS "user_settings" (
     "updated_at" timestamp DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS "trading_pairs" (
+CREATE TABLE IF NOT EXISTS public."trading_pairs" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "symbol" varchar(20) NOT NULL,
     "base_asset" varchar(10) NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS "trading_pairs" (
     "tick_size" numeric(18, 8)
 );
 
-CREATE TABLE IF NOT EXISTS "indicator_configs" (
+CREATE TABLE IF NOT EXISTS public."indicator_configs" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "name" text NOT NULL,
     "params" jsonb DEFAULT '{}'::jsonb,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS "indicator_configs" (
     "updated_at" timestamp DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS "positions" (
+CREATE TABLE IF NOT EXISTS public."positions" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "user_id" varchar NOT NULL,
     "symbol" varchar(20) NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS "positions" (
     "closed_at" timestamp
 );
 
-CREATE TABLE IF NOT EXISTS "closed_positions" (
+CREATE TABLE IF NOT EXISTS public."closed_positions" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "symbol" text NOT NULL,
     "side" text NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS "closed_positions" (
     "pnl_usd" numeric(18, 8) DEFAULT 0 NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "signals" (
+CREATE TABLE IF NOT EXISTS public."signals" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "symbol" varchar(20) NOT NULL,
     "timeframe" varchar(10) NOT NULL,
@@ -83,14 +83,14 @@ CREATE TABLE IF NOT EXISTS "signals" (
     "created_at" timestamp DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS "pair_timeframes" (
+CREATE TABLE IF NOT EXISTS public."pair_timeframes" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "symbol" varchar(20) NOT NULL,
     "timeframe" varchar(10) NOT NULL,
     "created_at" timestamp DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS "market_data" (
+CREATE TABLE IF NOT EXISTS public."market_data" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
     "symbol" varchar(20) NOT NULL,
     "timeframe" varchar(10) NOT NULL,
@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS "market_data" (
     "updated_at" timestamp DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "users_username_unique" ON "users" ("username");
-CREATE UNIQUE INDEX IF NOT EXISTS "user_settings_user_id_unique" ON "user_settings" ("user_id");
-CREATE UNIQUE INDEX IF NOT EXISTS "trading_pairs_symbol_unique" ON "trading_pairs" ("symbol");
-CREATE UNIQUE INDEX IF NOT EXISTS "indicator_configs_name_unique" ON "indicator_configs" ("name");
-CREATE UNIQUE INDEX IF NOT EXISTS "pair_timeframes_symbol_timeframe_unique" ON "pair_timeframes" ("symbol", "timeframe");
+CREATE UNIQUE INDEX IF NOT EXISTS public."users_username_unique" ON public."users" ("username");
+CREATE UNIQUE INDEX IF NOT EXISTS public."user_settings_user_id_unique" ON public."user_settings" ("user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS public."trading_pairs_symbol_unique" ON public."trading_pairs" ("symbol");
+CREATE UNIQUE INDEX IF NOT EXISTS public."indicator_configs_name_unique" ON public."indicator_configs" ("name");
+CREATE UNIQUE INDEX IF NOT EXISTS public."pair_timeframes_symbol_timeframe_unique" ON public."pair_timeframes" ("symbol", "timeframe");
