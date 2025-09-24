@@ -31,7 +31,16 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'indicator_configs' AND column_name = 'updated_at'
   ) THEN
-    ALTER TABLE "indicator_configs" RENAME COLUMN "updated_at" TO "created_at";
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'indicator_configs' AND column_name = 'created_at'
+    ) THEN
+      UPDATE indicator_configs
+      SET created_at = COALESCE(created_at, updated_at);
+      ALTER TABLE "indicator_configs" DROP COLUMN "updated_at";
+    ELSE
+      ALTER TABLE "indicator_configs" RENAME COLUMN "updated_at" TO "created_at";
+    END IF;
   END IF;
 END$$;
 
