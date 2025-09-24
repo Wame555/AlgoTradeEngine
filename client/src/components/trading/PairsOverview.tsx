@@ -36,7 +36,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
 
   const closePositionMutation = useMutation({
     mutationFn: async (positionId: string) => {
-      await apiRequest('DELETE', `/api/positions/${positionId}`);
+      await apiRequest('POST', `/api/trades/close`, { positionId });
     },
     onSuccess: () => {
       toast({
@@ -45,7 +45,8 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
         variant: "default",
       });
       if (userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/closed'] });
         queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
     },
@@ -78,7 +79,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
         variant: "default",
       });
       if (userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
         queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
       }
     },

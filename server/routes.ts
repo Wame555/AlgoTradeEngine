@@ -11,6 +11,8 @@ import {
   insertUserSettingsSchema,
   insertPositionSchema,
   closedPositions,
+  type Position,
+  type UserSettings,
 } from "@shared/schema";
 import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
 
@@ -39,8 +41,13 @@ async function ensureDefaultUser() {
       isTestnet: true,
       defaultLeverage: 1,
       riskPercent: 2,
+      demoEnabled: true,
+      defaultTpPct: 1,
+      defaultSlPct: 0.5,
     });
   }
+
+  await storage.ensureIndicatorConfigsSeed(user.id);
 
   return { user, settings };
 }
@@ -53,14 +60,9 @@ type Deps = {
   broadcast: (data: any) => void;
 };
 
-const indicatorConfigSchema = z.object({
+const indicatorConfigPayloadSchema = z.object({
   name: z.string().min(1, "Indicator name is required"),
-  params: z.union([z.record(z.any()), z.string()]).default({}),
-  enabled: z.boolean().optional().default(false),
-});
-
-const indicatorConfigRequestSchema = z.object({
-  configs: z.array(indicatorConfigSchema),
+  payload: z.record(z.any()).default({}),
 });
 
 const quickTradeSchema = insertPositionSchema
@@ -97,15 +99,25 @@ const accountPatchSchema = z
     }
   });
 
-const manualCloseSchema = z.object({
-  symbol: z.string().min(1),
-  side: z.enum(["LONG", "SHORT"]),
-  entry_ts: z.coerce.date(),
-  exit_ts: z.coerce.date(),
-  entry_px: z.coerce.number().positive(),
-  exit_px: z.coerce.number().positive(),
-  qty: z.coerce.number().positive(),
-  fee: z.coerce.number().nonnegative().default(0),
+const accountSettingsPatchSchema = z
+  .object({
+    demoEnabled: z.boolean().optional(),
+    defaultTpPct: z.union([z.number(), z.string()]).optional(),
+    defaultSlPct: z.union([z.number(), z.string()]).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.demoEnabled == null && value.defaultTpPct == null && value.defaultSlPct == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide at least one field to update",
+      });
+    }
+  });
+
+const tradeCloseSchema = z.object({
+  positionId: z.string().min(1),
+  exitPrice: z.union([z.number(), z.string()]).optional(),
+  feeUsd: z.union([z.number(), z.string()]).optional(),
 });
 
 function respondWithError(res: any, scope: string, error: unknown, fallback: string) {
@@ -178,6 +190,99 @@ export function registerRoutes(app: Express, deps: Deps): void {
     return ["1h"];
   };
 
+  const resolveUserId = async (value: unknown): Promise<string> => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+    const { user } = await ensureDefaultUser();
+    return user.id;
+  };
+
+  const parseNumeric = (value: unknown): number | undefined => {
+    if (value == null) {
+      return undefined;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const computeDefaultTargets = (
+    side: "LONG" | "SHORT",
+    entryPrice: number,
+    settings?: UserSettings | null,
+  ): { takeProfit?: string; stopLoss?: string } => {
+    if (!settings || settings.demoEnabled === false || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+      return {};
+    }
+
+    const tpPct = parseNumeric(settings.defaultTpPct);
+    const slPct = parseNumeric(settings.defaultSlPct);
+    const normalise = (value: number) => (Number.isFinite(value) ? value.toFixed(8) : undefined);
+
+    let takeProfit: string | undefined;
+    if (tpPct && tpPct > 0) {
+      const multiplier = tpPct / 100;
+      const price = side === "LONG" ? entryPrice * (1 + multiplier) : entryPrice * (1 - multiplier);
+      takeProfit = normalise(price);
+    }
+
+    let stopLoss: string | undefined;
+    if (slPct && slPct > 0) {
+      const multiplier = slPct / 100;
+      const price = side === "LONG" ? entryPrice * (1 - multiplier) : entryPrice * (1 + multiplier);
+      stopLoss = normalise(Math.max(price, 0.00000001));
+    }
+
+    return { takeProfit, stopLoss };
+  };
+
+  const computePnlForPosition = (position: Position, exitPrice: number) => {
+    const entry = parseNumeric(position.entryPrice) ?? 0;
+    const size = parseNumeric(position.size) ?? 0;
+    const pnl =
+      position.side === "LONG"
+        ? (exitPrice - entry) * size
+        : (entry - exitPrice) * size;
+    return Number.isFinite(pnl) ? pnl : 0;
+  };
+
+  const closePositionAndRecord = async (
+    position: Position,
+    exitPrice: number,
+    feeUsdInput?: number,
+  ) => {
+    const exit = Number.isFinite(exitPrice) ? exitPrice : parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
+    const feeUsd = Number.isFinite(feeUsdInput ?? NaN) ? Number(feeUsdInput) : 0;
+    const grossPnl = computePnlForPosition(position, exit);
+    const netPnl = grossPnl - (Number.isFinite(feeUsd) ? feeUsd : 0);
+    const exitPriceStr = exit.toFixed(8);
+    const feeStr = feeUsd.toFixed(8);
+    const pnlStr = netPnl.toFixed(8);
+    const closedAt = new Date();
+
+    const updated = await storage.closePosition(position.id, {
+      closePrice: exitPriceStr,
+      pnl: pnlStr,
+    });
+
+    const openedAt = position.openedAt instanceof Date ? position.openedAt : new Date(position.openedAt ?? Date.now());
+
+    const closedRecord = await storage.insertClosedPosition({
+      userId: position.userId,
+      symbol: position.symbol,
+      side: position.side,
+      size: position.size,
+      entryPrice: position.entryPrice,
+      exitPrice: exitPriceStr,
+      feeUsd: feeStr,
+      pnlUsd: pnlStr,
+      openedAt,
+      closedAt,
+    });
+
+    return { updated, closedRecord, pnlUsd: netPnl, exitPrice: exitPriceStr, feeUsd: feeStr };
+  };
+
   app.get("/api/session", async (_req, res) => {
     try {
       const sessionData = await ensureDefaultUser();
@@ -200,8 +305,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       await db.delete(paperAccounts);
       await db.insert(paperAccounts).values({ balance: "10000" });
+      const { user } = await ensureDefaultUser();
       await storage.deleteAllClosedPositions();
-      await storage.setAllIndicatorConfigsEnabled(false);
+      if (user?.id) {
+        await storage.deleteIndicatorConfigsForUser(user.id);
+        await storage.ensureIndicatorConfigsSeed(user.id);
+      }
       res.json({ ok: true });
     } catch (error) {
       respondWithError(res, "POST /api/account/reset", error, "Failed to reset account");
@@ -320,13 +429,69 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
-  app.get("/api/positions/:userId", async (req, res) => {
+  app.patch("/api/settings/account", async (req, res) => {
     try {
-      const { userId } = req.params;
-      const positions = await storage.getUserPositions(userId);
+      const patch = accountSettingsPatchSchema.parse(req.body ?? {});
+      const { user } = await ensureDefaultUser();
+      const existing = (await storage.getUserSettings(user.id)) ?? null;
+
+      const base: any = existing
+        ? { ...existing }
+        : { userId: user.id, isTestnet: true, defaultLeverage: 1, riskPercent: 2, demoEnabled: true };
+
+      delete base.id;
+      delete base.createdAt;
+      delete base.updatedAt;
+
+      if (patch.demoEnabled != null) {
+        base.demoEnabled = patch.demoEnabled;
+      }
+
+      if (patch.defaultTpPct != null) {
+        const value = Number(patch.defaultTpPct);
+        if (!Number.isFinite(value) || value <= 0 || value > 50) {
+          return res.status(400).json({ message: "Default TP % must be between 0 and 50" });
+        }
+        base.defaultTpPct = value;
+      }
+
+      if (patch.defaultSlPct != null) {
+        const value = Number(patch.defaultSlPct);
+        if (!Number.isFinite(value) || value <= 0 || value > 50) {
+          return res.status(400).json({ message: "Default SL % must be between 0 and 50" });
+        }
+        base.defaultSlPct = value;
+      }
+
+      base.userId = user.id;
+
+      const result = await storage.upsertUserSettings(base);
+      res.json(result);
+    } catch (error) {
+      respondWithError(res, "PATCH /api/settings/account", error, "Failed to update account settings");
+    }
+  });
+
+  app.get("/api/positions/open", async (req, res) => {
+    try {
+      const userId = await resolveUserId(req.query.userId);
+      const positions = await storage.getOpenPositions(userId);
       res.json(positions);
     } catch (error) {
-      respondWithError(res, "GET /api/positions/:userId", error, "Failed to fetch positions");
+      respondWithError(res, "GET /api/positions/open", error, "Failed to fetch open positions");
+    }
+  });
+
+  app.get("/api/positions/closed", async (req, res) => {
+    try {
+      const userId = await resolveUserId(req.query.userId);
+      const symbol = typeof req.query.symbol === "string" && req.query.symbol.trim().length > 0 ? req.query.symbol : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const offset = req.query.offset ? Number(req.query.offset) : undefined;
+      const closed = await storage.getClosedPositions(userId, { symbol, limit, offset });
+      res.json(closed);
+    } catch (error) {
+      respondWithError(res, "GET /api/positions/closed", error, "Failed to fetch closed positions");
     }
   });
 
@@ -361,15 +526,15 @@ export function registerRoutes(app: Express, deps: Deps): void {
         return res.status(400).json({ message: "Position size could not be determined" });
       }
 
-      const position = insertPositionSchema.parse({
+      const parsedPosition = insertPositionSchema.parse({
         ...request,
         entryPrice: request.entryPrice ?? "0",
       });
 
-      const side = position.side === "LONG" ? "BUY" : "SELL";
-      const qty = parseFloat(position.size);
+      const side = parsedPosition.side === "LONG" ? "BUY" : "SELL";
+      const qty = parseFloat(parsedPosition.size);
       const order = await broker.placeOrder({
-        symbol: position.symbol,
+        symbol: parsedPosition.symbol,
         side,
         type: "MARKET",
         qty,
@@ -380,21 +545,29 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
 
       const entryFill = order.fills?.[0]?.price;
-      const entryPrice = entryFill != null ? entryFill.toString() : position.entryPrice;
-      position.orderId = order.orderId;
-      position.entryPrice = entryPrice;
-      position.currentPrice = entryPrice;
+      const entryPrice = entryFill != null ? entryFill.toString() : parsedPosition.entryPrice;
+      const userSettings = await storage.getUserSettings(parsedPosition.userId);
+      const defaults = computeDefaultTargets(parsedPosition.side as "LONG" | "SHORT", Number(entryPrice), userSettings);
 
-      const result = await storage.createPosition(position);
+      const positionToSave: typeof parsedPosition = {
+        ...parsedPosition,
+        orderId: order.orderId,
+        entryPrice,
+        currentPrice: entryPrice,
+        stopLoss: parsedPosition.stopLoss ?? defaults.stopLoss ?? undefined,
+        takeProfit: parsedPosition.takeProfit ?? defaults.takeProfit ?? undefined,
+      };
+
+      const result = await storage.createPosition(positionToSave);
 
       await telegramService.sendTradeNotification({
         action: "opened",
-        symbol: position.symbol,
-        side: position.side,
-        size: position.size,
-        price: position.entryPrice,
-        stopLoss: position.stopLoss ?? undefined,
-        takeProfit: position.takeProfit ?? undefined,
+        symbol: result.symbol,
+        side: result.side,
+        size: result.size,
+        price: result.entryPrice,
+        stopLoss: result.stopLoss ?? undefined,
+        takeProfit: result.takeProfit ?? undefined,
       });
 
       broadcast({ type: "position_opened", data: result });
@@ -425,34 +598,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
         return res.status(404).json({ message: "Position not found" });
       }
 
-      const lastPrice = getLastPrice(position.symbol);
-      const fallbackPrice = Number(position.currentPrice ?? position.entryPrice);
-      const closePrice = lastPrice ?? fallbackPrice;
-      const entryPrice = Number(position.entryPrice);
-      const size = Number(position.size);
-      const pnl =
-        position.side === "LONG"
-          ? (closePrice - entryPrice) * size
-          : (entryPrice - closePrice) * size;
+      const marketPrice = getLastPrice(position.symbol);
+      const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
+      const exitPrice = marketPrice ?? fallbackPrice;
 
-      const closedPosition = await storage.closePosition(id, {
-        closePrice: closePrice.toFixed(8),
-        pnl: pnl.toFixed(8),
-      });
+      const { updated } = await closePositionAndRecord(position, exitPrice, 0);
 
-      await storage.insertClosedPosition({
-        symbol: position.symbol,
-        side: position.side,
-        entryTs: position.openedAt ?? new Date(),
-        exitTs: new Date(),
-        entryPx: position.entryPrice,
-        exitPx: closePrice.toString(),
-        qty: position.size,
-        fee: "0",
-      });
-
-      broadcast({ type: "position_closed", data: closedPosition });
-      res.json(closedPosition);
+      broadcast({ type: "position_closed", data: updated });
+      res.json(updated);
     } catch (error) {
       respondWithError(res, "DELETE /api/positions/:id", error, "Failed to close position");
     }
@@ -460,43 +613,25 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.post("/api/positions/:userId/close-all", async (req, res) => {
     try {
-      const { userId } = req.params;
-      const closedPositions = await storage.closeAllUserPositions(userId, (position) => {
-        const lastPrice = getLastPrice(position.symbol);
-        const fallbackPrice = Number(position.currentPrice ?? position.entryPrice);
-        const closePrice = lastPrice ?? fallbackPrice;
-        const entryPrice = Number(position.entryPrice);
-        const size = Number(position.size);
-        const pnl =
-          position.side === "LONG"
-            ? (closePrice - entryPrice) * size
-            : (entryPrice - closePrice) * size;
+      const userId = await resolveUserId(req.params.userId);
+      const openPositions = await storage.getOpenPositions(userId);
 
-        storage
-          .insertClosedPosition({
-            symbol: position.symbol,
-            side: position.side,
-            entryTs: position.openedAt ?? new Date(),
-            exitTs: new Date(),
-            entryPx: position.entryPrice,
-            exitPx: closePrice.toString(),
-            qty: position.size,
-            fee: "0",
-          })
-          .catch((err) => logError("closeAllUserPositions insertClosedPosition", err));
+      const closed: Position[] = [];
+      for (const position of openPositions) {
+        const marketPrice = getLastPrice(position.symbol);
+        const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
+        const exitPrice = marketPrice ?? fallbackPrice;
+        const { updated } = await closePositionAndRecord(position, exitPrice, 0);
+        closed.push(updated);
+        broadcast({ type: "position_closed", data: updated });
+      }
 
-        return {
-          closePrice: closePrice.toFixed(8),
-          pnl: pnl.toFixed(8),
-        };
-      });
+      if (closed.length > 0) {
+        await telegramService.sendNotification("🛑 All positions have been closed");
+      }
 
-      await telegramService.sendNotification("🛑 All positions have been closed");
-      closedPositions.forEach((position) => {
-        broadcast({ type: "position_closed", data: position });
-      });
       broadcast({ type: "all_positions_closed", userId });
-      res.json({ message: "All positions closed" });
+      res.json({ message: "All positions closed", count: closed.length });
     } catch (error) {
       respondWithError(res, "POST /api/positions/:userId/close-all", error, "Failed to close all positions");
     }
@@ -504,20 +639,24 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.post("/api/trades/close", async (req, res) => {
     try {
-      const body = manualCloseSchema.parse(req.body ?? {});
-      const result = await storage.insertClosedPosition({
-        symbol: body.symbol,
-        side: body.side,
-        entryTs: body.entry_ts,
-        exitTs: body.exit_ts,
-        entryPx: body.entry_px.toString(),
-        exitPx: body.exit_px.toString(),
-        qty: body.qty.toString(),
-        fee: body.fee.toString(),
-      });
-      res.json(result);
+      const payload = tradeCloseSchema.parse(req.body ?? {});
+      const position = await storage.getPositionById(payload.positionId);
+      if (!position) {
+        return res.status(404).json({ message: "Position not found" });
+      }
+
+      const providedPrice = parseNumeric(payload.exitPrice);
+      const marketPrice = getLastPrice(position.symbol);
+      const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
+      const exitPrice = providedPrice ?? marketPrice ?? fallbackPrice;
+      const feeUsd = parseNumeric(payload.feeUsd) ?? 0;
+
+      const { closedRecord, updated } = await closePositionAndRecord(position, exitPrice, feeUsd);
+
+      broadcast({ type: "position_closed", data: updated });
+      res.json(closedRecord);
     } catch (error) {
-      respondWithError(res, "POST /api/trades/close", error, "Failed to record closed trade");
+      respondWithError(res, "POST /api/trades/close", error, "Failed to close trade");
     }
   });
 
@@ -526,17 +665,17 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const rows = await db.select().from(closedPositions);
 
       const computePnlUsd = (row: typeof rows[number]) => {
-        const entryPx = Number(row.entryPx ?? 0);
-        const exitPx = Number(row.exitPx ?? 0);
-        const qty = Number(row.qty ?? 0);
-        const fee = Number(row.fee ?? 0);
+        const entryPx = Number(row.entryPrice ?? 0);
+        const exitPx = Number(row.exitPrice ?? 0);
+        const size = Number(row.size ?? 0);
+        const fee = Number(row.feeUsd ?? 0);
 
-        if (!Number.isFinite(entryPx) || !Number.isFinite(exitPx) || !Number.isFinite(qty)) {
+        if (!Number.isFinite(entryPx) || !Number.isFinite(exitPx) || !Number.isFinite(size)) {
           return 0;
         }
 
         const direction = row.side === "LONG" ? 1 : -1;
-        const pnl = (exitPx - entryPx) * direction * qty - (Number.isFinite(fee) ? fee : 0);
+        const pnl = (exitPx - entryPx) * direction * size - (Number.isFinite(fee) ? fee : 0);
         return Number.isFinite(pnl) ? pnl : 0;
       };
 
@@ -550,8 +689,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
       let rewardSum = 0;
       let rewardCount = 0;
       for (const row of rowsWithPnl) {
-        const entryPx = Number(row.entryPx ?? 0);
-        const exitPx = Number(row.exitPx ?? 0);
+        const entryPx = Number(row.entryPrice ?? 0);
+        const exitPx = Number(row.exitPrice ?? 0);
         if (!Number.isFinite(entryPx) || entryPx === 0) {
           continue;
         }
@@ -563,7 +702,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const last30dPnl = rowsWithPnl
-        .filter((row) => row.exitTs && new Date(row.exitTs) >= cutoff)
+        .filter((row) => row.closedAt && new Date(row.closedAt) >= cutoff)
         .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
       res.json({
@@ -578,42 +717,39 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
-  app.get("/api/indicator-configs", async (_req, res) => {
+  app.get("/api/indicators/configs", async (req, res) => {
     try {
-      const configs = await storage.getIndicatorConfigs();
+      const userId = await resolveUserId(req.query.userId);
+      const configs = await storage.getIndicatorConfigs(userId);
       res.json(configs);
     } catch (error) {
-      respondWithError(res, "GET /api/indicator-configs", error, "Failed to fetch indicator configurations");
+      respondWithError(res, "GET /api/indicators/configs", error, "Failed to fetch indicator configurations");
     }
   });
 
-  app.post("/api/indicator-configs", async (req, res) => {
+  app.post("/api/indicators/configs", async (req, res) => {
     try {
-      const { configs } = indicatorConfigRequestSchema.parse(req.body ?? {});
-      const normalised = [] as Array<{ name: string; params: Record<string, unknown>; enabled: boolean }>;
-
-      for (const config of configs) {
-        let params: Record<string, unknown> = {};
-        if (typeof config.params === "string") {
-          try {
-            params = config.params ? JSON.parse(config.params) : {};
-          } catch (parseError) {
-            return res.status(400).json({ message: `Invalid params JSON for ${config.name}` });
-          }
-        } else {
-          params = (config.params as Record<string, unknown>) ?? {};
-        }
-        normalised.push({
-          name: config.name,
-          params,
-          enabled: config.enabled ?? false,
-        });
-      }
-
-      const result = await storage.upsertIndicatorConfigs(normalised as any);
-      res.json(result);
+      const payload = indicatorConfigPayloadSchema.parse(req.body ?? {});
+      const userId = await resolveUserId(req.query.userId);
+      const result = await storage.createIndicatorConfig({
+        userId,
+        name: payload.name,
+        payload: payload.payload,
+      });
+      res.status(201).json(result);
     } catch (error) {
-      respondWithError(res, "POST /api/indicator-configs", error, "Failed to save indicator configurations");
+      respondWithError(res, "POST /api/indicators/configs", error, "Failed to save indicator configuration");
+    }
+  });
+
+  app.delete("/api/indicators/configs/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = await resolveUserId(req.query.userId);
+      await storage.deleteIndicatorConfig(id, userId);
+      res.status(204).end();
+    } catch (error) {
+      respondWithError(res, "DELETE /api/indicators/configs/:id", error, "Failed to delete indicator configuration");
     }
   });
 

@@ -35,7 +35,7 @@ import { useUserSettings } from "@/hooks/useTradingData";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertUserSettingsSchema } from "@shared/schema";
-import { Save, Key, Shield, DollarSign } from "lucide-react";
+import { Save, Key, Shield, DollarSign, TrendingUp } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 
 const settingsFormSchema = insertUserSettingsSchema.extend({
@@ -60,13 +60,11 @@ export default function Settings() {
     onSuccess: () => {
       toast({
         title: "Statistics reset",
-        description: "Closed positions and indicator states have been reset.",
+        description: "Closed positions and indicator configurations have been reset.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/stats/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/indicator-configs"] });
-      if (userId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/positions", userId] });
-      }
+      queryClient.invalidateQueries({ queryKey: ["/api/indicators/configs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/positions/open"] });
     },
     onError: (error: any) => {
       toast({
@@ -108,6 +106,9 @@ export default function Settings() {
       isTestnet: true,
       defaultLeverage: 1,
       riskPercent: 2,
+      demoEnabled: true,
+      defaultTpPct: 1,
+      defaultSlPct: 0.5,
       telegramBotToken: "",
       telegramChatId: "",
     },
@@ -129,6 +130,9 @@ export default function Settings() {
         isTestnet: settings.isTestnet ?? true,
         defaultLeverage: settings.defaultLeverage ?? 1,
         riskPercent: Number(settings.riskPercent ?? 2),
+        demoEnabled: settings.demoEnabled ?? true,
+        defaultTpPct: Number(settings.defaultTpPct ?? 1),
+        defaultSlPct: Number(settings.defaultSlPct ?? 0.5),
         telegramBotToken: settings.telegramBotToken ?? "",
         telegramChatId: settings.telegramChatId ?? "",
       });
@@ -140,6 +144,9 @@ export default function Settings() {
         isTestnet: true,
         defaultLeverage: 1,
         riskPercent: 2,
+        demoEnabled: true,
+        defaultTpPct: 1,
+        defaultSlPct: 0.5,
         telegramBotToken: "",
         telegramChatId: "",
       });
@@ -259,7 +266,8 @@ export default function Settings() {
             <AlertDialogHeader>
               <AlertDialogTitle>Reset statistics?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will clear all closed positions and disable every indicator module. This action cannot be undone.
+                This will clear all closed positions and restore indicator configurations to their default presets. This action
+                cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -472,6 +480,94 @@ export default function Settings() {
                   </FormItem>
                 )}
               />
+            </CardContent>
+          </Card>
+
+          {/* Demo Trading Defaults */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <TrendingUp className="h-5 w-5" />
+                <span>Demo Trading Defaults</span>
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Configure default take profit and stop loss targets for demo orders
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <FormField
+                control={form.control}
+                name="demoEnabled"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-lg border border-border p-4">
+                    <div>
+                      <FormLabel className="text-base">Use demo account</FormLabel>
+                      <p className="text-sm text-muted-foreground">
+                        Toggle demo trading features and default order protections.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value ?? true}
+                        onCheckedChange={field.onChange}
+                        data-testid="switch-demo-enabled"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="defaultTpPct"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Default Take Profit (%)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={0.1}
+                          max={50}
+                          step={0.1}
+                          value={field.value?.toString() ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            field.onChange(value === "" ? undefined : Number(value));
+                          }}
+                          data-testid="input-default-tp"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="defaultSlPct"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Default Stop Loss (%)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={0.1}
+                          max={50}
+                          step={0.1}
+                          value={field.value?.toString() ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            field.onChange(value === "" ? undefined : Number(value));
+                          }}
+                          data-testid="input-default-sl"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </CardContent>
           </Card>
 

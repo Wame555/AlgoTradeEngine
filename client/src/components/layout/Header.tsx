@@ -63,18 +63,19 @@ export function Header({ isConnected }: HeaderProps) {
       }
       await apiRequest("POST", `/api/positions/${userId}/close-all`);
     },
-   onSuccess: () => {
-     toast({
-       title: "Success",
-       description: "All positions have been closed",
-       variant: "default",
-     });
-     if (userId) {
-       queryClient.invalidateQueries({ queryKey: ['/api/positions', userId] });
-      queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
-     }
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "All positions have been closed",
+        variant: "default",
+      });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/closed'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
+      }
       queryClient.invalidateQueries({ queryKey: ['/api/account'] });
-   },
+    },
     onError: (error: any) => {
       toast({
         title: "Error",

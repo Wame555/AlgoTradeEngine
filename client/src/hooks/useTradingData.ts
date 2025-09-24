@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   TradingPair,
   Position,
+  ClosedPositionSummary,
   Signal,
   MarketData,
   IndicatorConfig,
@@ -42,9 +43,18 @@ export function usePositions() {
   const userId = useUserId();
 
   return useQuery<Position[]>({
-    queryKey: ['/api/positions', userId],
+    queryKey: ['/api/positions/open', { userId }],
     staleTime: 10 * 1000,
     refetchInterval: 10 * 1000,
+    enabled: Boolean(userId),
+  });
+}
+
+export function useClosedPositions(symbol?: string, limit: number = 50, offset: number = 0) {
+  const userId = useUserId();
+
+  return useQuery<ClosedPositionSummary[]>({
+    queryKey: ['/api/positions/closed', { userId, symbol, limit, offset }],
     enabled: Boolean(userId),
   });
 }
@@ -80,9 +90,12 @@ export function useSignalsBySymbol(symbol: string, limit?: number) {
 }
 
 export function useIndicators() {
+  const userId = useUserId();
+
   return useQuery<IndicatorConfig[]>({
-    queryKey: ['/api/indicator-configs'],
+    queryKey: ['/api/indicators/configs', { userId }],
     staleTime: 60 * 1000,
+    enabled: Boolean(userId),
   });
 }
 
