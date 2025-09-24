@@ -1,8 +1,30 @@
--- Ensure pair_timeframes has a consistent timeframe column before creating the unique index
+-- Ensure the pair_timeframes table exists with a usable timeframe column
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'pair_timeframes'
+  ) THEN
+    EXECUTE '
+      CREATE TABLE IF NOT EXISTS "pair_timeframes" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "symbol" text NOT NULL,
+        "timeframe" text NOT NULL,
+        "created_at" timestamp DEFAULT now()
+      )
+    ';
+  END IF;
+END
+$$;
+
+-- Normalise legacy columns (tf -> timeframe) and guarantee the column exists
 DO $$
 DECLARE
   has_tf_column boolean;
   has_timeframe_column boolean;
+  has_null_timeframes boolean;
 BEGIN
   SELECT EXISTS (
     SELECT 1
@@ -36,9 +58,17 @@ BEGIN
     EXECUTE 'ALTER TABLE "pair_timeframes" ADD COLUMN "timeframe" text';
     has_timeframe_column := true;
   END IF;
+
+  IF has_timeframe_column THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM "pair_timeframes" WHERE "timeframe" IS NULL)' INTO has_null_timeframes;
+    IF NOT has_null_timeframes THEN
+      EXECUTE 'ALTER TABLE "pair_timeframes" ALTER COLUMN "timeframe" SET NOT NULL';
+    END IF;
+  END IF;
 END
 $$;
 
+-- Create the unique index only when the timeframe column is present
 DO $$
 BEGIN
   IF EXISTS (
