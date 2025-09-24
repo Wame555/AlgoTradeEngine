@@ -69,7 +69,7 @@
           "type": "numeric(18, 8)",
           "primaryKey": false,
           "notNull": true,
-          "default": "'0'"
+          "default": "0"
         }
       },
       "indexes": {},

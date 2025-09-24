@@ -17,9 +17,6 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE "pair_timeframes"
-  ADD COLUMN IF NOT EXISTS "timeframe" text;
-
 DO $$
 BEGIN
   IF EXISTS (
@@ -29,8 +26,28 @@ BEGIN
       AND table_name = 'pair_timeframes'
       AND column_name = 'tf'
   ) THEN
-    EXECUTE 'UPDATE "pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf") WHERE "tf" IS NOT NULL';
-    EXECUTE 'ALTER TABLE "pair_timeframes" DROP COLUMN "tf"';
+    IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'pair_timeframes'
+        AND column_name = 'timeframe'
+    ) THEN
+      EXECUTE 'ALTER TABLE "pair_timeframes" RENAME COLUMN "tf" TO "timeframe"';
+    ELSE
+      EXECUTE 'UPDATE "pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf")';
+      EXECUTE 'ALTER TABLE "pair_timeframes" DROP COLUMN "tf"';
+    END IF;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'pair_timeframes'
+      AND column_name = 'timeframe'
+  ) THEN
+    EXECUTE 'ALTER TABLE "pair_timeframes" ADD COLUMN "timeframe" text';
   END IF;
 END $$;
 
