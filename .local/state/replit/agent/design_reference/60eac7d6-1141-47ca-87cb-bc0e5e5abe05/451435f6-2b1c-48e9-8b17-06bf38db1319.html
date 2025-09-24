@@ -1,0 +1,1061 @@
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Modular Bot - Professional Trading Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                borderRadius: {
+                    lg: "var(--radius)",
+                    md: "calc(var(--radius) - 2px)",
+                    sm: "calc(var(--radius) - 4px)",
+                },
+                colors: {
+                    background: "var(--background)",
+                    foreground: "var(--foreground)",
+                    card: {
+                        DEFAULT: "var(--card)",
+                        foreground: "var(--card-foreground)",
+                    },
+                    popover: {
+                        DEFAULT: "var(--popover)",
+                        foreground: "var(--popover-foreground)",
+                    },
+                    primary: {
+                        DEFAULT: "var(--primary)",
+                        foreground: "var(--primary-foreground)",
+                    },
+                    secondary: {
+                        DEFAULT: "var(--secondary)",
+                        foreground: "var(--secondary-foreground)",
+                    },
+                    muted: {
+                        DEFAULT: "var(--muted)",
+                        foreground: "var(--muted-foreground)",
+                    },
+                    accent: {
+                        DEFAULT: "var(--accent)",
+                        foreground: "var(--accent-foreground)",
+                    },
+                    destructive: {
+                        DEFAULT: "var(--destructive)",
+                        foreground: "var(--destructive-foreground)",
+                    },
+                    border: "var(--border)",
+                    input: "var(--input)",
+                    ring: "var(--ring)",
+                    chart: {
+                        "1": "var(--chart-1)",
+                        "2": "var(--chart-2)",
+                        "3": "var(--chart-3)",
+                        "4": "var(--chart-4)",
+                        "5": "var(--chart-5)",
+                    }
+                },
+                fontFamily: {
+                    sans: ["Inter", "var(--font-sans)"],
+                    mono: ["JetBrains Mono", "var(--font-mono)"],
+                }
+            }
+        }
+    };
+    </script>
+    <style>
+        :root {
+            --background: hsl(240 15% 6%);
+            --foreground: hsl(240 6% 90%);
+            --card: hsl(240 10% 8%);
+            --card-foreground: hsl(240 6% 88%);
+            --popover: hsl(240 10% 8%);
+            --popover-foreground: hsl(240 6% 88%);
+            --primary: hsl(165 85% 41%);
+            --primary-foreground: hsl(240 15% 6%);
+            --secondary: hsl(240 8% 15%);
+            --secondary-foreground: hsl(240 6% 85%);
+            --muted: hsl(240 8% 12%);
+            --muted-foreground: hsl(240 6% 60%);
+            --accent: hsl(224 100% 67%);
+            --accent-foreground: hsl(240 15% 6%);
+            --destructive: hsl(348 100% 65%);
+            --destructive-foreground: hsl(240 15% 6%);
+            --border: hsl(240 8% 18%);
+            --input: hsl(240 8% 18%);
+            --ring: hsl(165 85% 41%);
+            --radius: 8px;
+            --chart-1: hsl(165 85% 41%);
+            --chart-2: hsl(348 100% 65%);
+            --chart-3: hsl(224 100% 67%);
+            --chart-4: hsl(45 100% 55%);
+            --chart-5: hsl(280 100% 70%);
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, hsl(240 15% 6%) 0%, hsl(240 12% 8%) 100%);
+        }
+        
+        .profit-text { color: hsl(165 85% 41%); }
+        .loss-text { color: hsl(348 100% 65%); }
+        
+        .pulse-dot {
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .signal-strength {
+            background: linear-gradient(90deg, 
+                hsl(348 100% 65%) 0%, 
+                hsl(45 100% 55%) 50%, 
+                hsl(165 85% 41%) 100%);
+        }
+        
+        .tab-active {
+            background: hsl(165 85% 41%);
+            color: hsl(240 15% 6%);
+        }
+        
+        .scrollbar-hide {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-background text-foreground font-sans antialiased gradient-bg min-h-screen">
+    
+    <!-- @COMPONENT: Header [Navigation and account info] -->
+    <header class="bg-card border-b border-border">
+        <div class="flex items-center justify-between px-6 py-4">
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                        <i class="fas fa-robot text-primary-foreground"></i>
+                    </div>
+                    <h1 class="text-xl font-semibold">Crypto Modular Bot</h1>
+                </div>
+                
+                <!-- Live Status Indicator -->
+                <div class="flex items-center space-x-2 text-sm">
+                    <div class="w-2 h-2 bg-primary rounded-full pulse-dot"></div>
+                    <span class="text-muted-foreground">Live Feed</span>
+                    <span class="text-primary font-mono">99.8ms</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <!-- Account Balance -->
+                <div class="bg-secondary px-4 py-2 rounded-lg">
+                    <div class="text-xs text-muted-foreground">Demo Balance</div>
+                    <div class="font-mono font-semibold text-lg">
+                        <span data-bind="account.balance" data-mock="true">$10,247.83</span>
+                    </div>
+                </div>
+                
+                <!-- P&L Today -->
+                <div class="bg-secondary px-4 py-2 rounded-lg">
+                    <div class="text-xs text-muted-foreground">P&L Today</div>
+                    <div class="font-mono font-semibold text-lg profit-text">
+                        <span data-bind="account.todayPnl" data-mock="true">+$123.45</span>
+                    </div>
+                </div>
+                
+                <!-- Settings -->
+                <button class="w-10 h-10 bg-secondary rounded-lg flex items-center justify-center hover:bg-accent hover:text-accent-foreground transition-colors">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+    <!-- @END_COMPONENT: Header -->
+    
+    <div class="flex h-[calc(100vh-80px)]">
+        
+        <!-- @COMPONENT: Sidebar [Navigation tabs] -->
+        <aside class="w-64 bg-card border-r border-border p-4">
+            <nav class="space-y-2">
+                <div class="mb-6">
+                    <h2 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Navigation</h2>
+                </div>
+                
+                <button onclick="showTab('dashboard')" id="tab-dashboard" class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg tab-active transition-colors">
+                    <i class="fas fa-chart-line w-5"></i>
+                    <span>Dashboard</span>
+                </button>
+                
+                <button onclick="showTab('positions')" id="tab-positions" class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-secondary transition-colors">
+                    <i class="fas fa-coins w-5"></i>
+                    <span>Positions</span>
+                    <span class="bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full ml-auto">3</span>
+                </button>
+                
+                <button onclick="showTab('signals')" id="tab-signals" class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-secondary transition-colors">
+                    <i class="fas fa-signal w-5"></i>
+                    <span>Signals</span>
+                    <span class="bg-destructive text-destructive-foreground text-xs px-2 py-1 rounded-full ml-auto">7</span>
+                </button>
+                
+                <button onclick="showTab('analysis')" id="tab-analysis" class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-secondary transition-colors">
+                    <i class="fas fa-search-dollar w-5"></i>
+                    <span>Pair Analysis</span>
+                </button>
+                
+                <hr class="border-border my-4">
+                
+                <div class="mb-4">
+                    <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Module Status</h3>
+                </div>
+                
+                <!-- Module Status List -->
+                <div class="space-y-2 text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="text-muted-foreground">Trend Modules</span>
+                        <span class="text-primary">5/5</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-muted-foreground">Momentum</span>
+                        <span class="text-primary">4/4</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-muted-foreground">Volatility</span>
+                        <span class="text-primary">3/3</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-muted-foreground">Volume</span>
+                        <span class="text-primary">3/3</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-muted-foreground">Pattern</span>
+                        <span class="text-accent">4/5</span>
+                    </div>
+                </div>
+            </nav>
+        </aside>
+        <!-- @END_COMPONENT: Sidebar -->
+        
+        <!-- @COMPONENT: MainContent [Dynamic tab content] -->
+        <main class="flex-1 overflow-auto p-6">
+            
+            <!-- @COMPONENT: DashboardTab [Overview and charts] -->
+            <div id="dashboard-content" class="tab-content">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    
+                    <!-- Quick Stats -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Quick Stats</h3>
+                        <div class="space-y-4">
+                            <div class="flex justify-between items-center">
+                                <span class="text-muted-foreground">Total Profit</span>
+                                <span class="font-mono font-semibold profit-text" data-mock="true">$1,247.83</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-muted-foreground">Win Rate</span>
+                                <span class="font-mono font-semibold" data-mock="true">68.3%</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-muted-foreground">Active Positions</span>
+                                <span class="font-mono font-semibold" data-mock="true">3</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-muted-foreground">Trades Today</span>
+                                <span class="font-mono font-semibold" data-mock="true">7</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Combined Score -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Combined Score</h3>
+                        <div class="text-center">
+                            <div class="text-4xl font-bold mb-2" data-mock="true">73</div>
+                            <div class="text-sm text-muted-foreground mb-4">Confidence Score</div>
+                            <div class="w-full bg-muted rounded-full h-3 mb-4">
+                                <div class="signal-strength h-3 rounded-full" style="width: 73%"></div>
+                            </div>
+                            <div class="bg-primary text-primary-foreground px-4 py-2 rounded-lg font-semibold">
+                                LONG SIGNAL
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Market Overview -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Market Overview</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center">
+                                <span>BTC/USDT</span>
+                                <div class="text-right">
+                                    <div class="font-mono profit-text" data-mock="true">$43,247.50</div>
+                                    <div class="text-xs text-muted-foreground">+2.3%</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>ETH/USDT</span>
+                                <div class="text-right">
+                                    <div class="font-mono profit-text" data-mock="true">$2,547.80</div>
+                                    <div class="text-xs text-muted-foreground">+1.8%</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>BNB/USDT</span>
+                                <div class="text-right">
+                                    <div class="font-mono loss-text" data-mock="true">$247.30</div>
+                                    <div class="text-xs text-muted-foreground">-0.8%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Chart Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold">BTC/USDT Chart</h3>
+                            <select class="bg-secondary border border-border rounded px-3 py-1 text-sm">
+                                <option>1H</option>
+                                <option>4H</option>
+                                <option selected>1D</option>
+                                <option>1W</option>
+                            </select>
+                        </div>
+                        <div class="relative h-64">
+                            <canvas id="priceChart" class="w-full h-full"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Module Scores</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-3 h-3 bg-primary rounded-full"></div>
+                                    <span>MA Trend</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-16 bg-muted rounded-full h-2">
+                                        <div class="bg-primary h-2 rounded-full" style="width: 85%"></div>
+                                    </div>
+                                    <span class="font-mono text-sm w-8">85</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-3 h-3 bg-accent rounded-full"></div>
+                                    <span>RSI</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-16 bg-muted rounded-full h-2">
+                                        <div class="bg-accent h-2 rounded-full" style="width: 72%"></div>
+                                    </div>
+                                    <span class="font-mono text-sm w-8">72</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-3 h-3 bg-chart-4 rounded-full"></div>
+                                    <span>Bollinger</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-16 bg-muted rounded-full h-2">
+                                        <div class="bg-chart-4 h-2 rounded-full" style="width: 68%"></div>
+                                    </div>
+                                    <span class="font-mono text-sm w-8">68</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-3 h-3 bg-chart-5 rounded-full"></div>
+                                    <span>VWAP</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-16 bg-muted rounded-full h-2">
+                                        <div class="bg-chart-5 h-2 rounded-full" style="width: 79%"></div>
+                                    </div>
+                                    <span class="font-mono text-sm w-8">79</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-3 h-3 bg-destructive rounded-full"></div>
+                                    <span>Volume</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-16 bg-muted rounded-full h-2">
+                                        <div class="bg-destructive h-2 rounded-full" style="width: 45%"></div>
+                                    </div>
+                                    <span class="font-mono text-sm w-8">45</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- @END_COMPONENT: DashboardTab -->
+            
+            <!-- @COMPONENT: PositionsTab [Active positions management] -->
+            <div id="positions-content" class="tab-content hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">Active Positions</h2>
+                    <button class="bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:opacity-90 transition-opacity">
+                        <i class="fas fa-plus mr-2"></i>
+                        New Position
+                    </button>
+                </div>
+                
+                <!-- Positions Table -->
+                <div class="bg-card rounded-lg border border-border overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-muted">
+                                <tr>
+                                    <th class="text-left p-4 font-semibold text-sm">Symbol</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Side</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Size</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Entry Price</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Current Price</th>
+                                    <th class="text-left p-4 font-semibold text-sm">P&L</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-border">
+                                <tr data-mock="true">
+                                    <td class="p-4">
+                                        <div class="flex items-center space-x-2">
+                                            <div class="w-8 h-8 bg-orange-500 rounded-full flex items-center justify-center text-xs font-bold">B</div>
+                                            <span class="font-semibold">BTC/USDT</span>
+                                        </div>
+                                    </td>
+                                    <td class="p-4">
+                                        <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-sm font-semibold">LONG</span>
+                                    </td>
+                                    <td class="p-4 font-mono">0.0245</td>
+                                    <td class="p-4 font-mono">$42,150.00</td>
+                                    <td class="p-4 font-mono">$43,247.50</td>
+                                    <td class="p-4">
+                                        <div class="profit-text font-mono font-semibold">+$26.89</div>
+                                        <div class="text-xs text-muted-foreground">+2.6%</div>
+                                    </td>
+                                    <td class="p-4">
+                                        <div class="flex space-x-2">
+                                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">
+                                                Edit
+                                            </button>
+                                            <button class="bg-destructive text-destructive-foreground hover:opacity-90 px-3 py-1 rounded text-sm transition-opacity">
+                                                Close
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                
+                                <tr data-mock="true">
+                                    <td class="p-4">
+                                        <div class="flex items-center space-x-2">
+                                            <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-xs font-bold">E</div>
+                                            <span class="font-semibold">ETH/USDT</span>
+                                        </div>
+                                    </td>
+                                    <td class="p-4">
+                                        <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-sm font-semibold">LONG</span>
+                                    </td>
+                                    <td class="p-4 font-mono">2.15</td>
+                                    <td class="p-4 font-mono">$2,480.00</td>
+                                    <td class="p-4 font-mono">$2,547.80</td>
+                                    <td class="p-4">
+                                        <div class="profit-text font-mono font-semibold">+$145.77</div>
+                                        <div class="text-xs text-muted-foreground">+2.7%</div>
+                                    </td>
+                                    <td class="p-4">
+                                        <div class="flex space-x-2">
+                                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">
+                                                Edit
+                                            </button>
+                                            <button class="bg-destructive text-destructive-foreground hover:opacity-90 px-3 py-1 rounded text-sm transition-opacity">
+                                                Close
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                
+                                <tr data-mock="true">
+                                    <td class="p-4">
+                                        <div class="flex items-center space-x-2">
+                                            <div class="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center text-xs font-bold">A</div>
+                                            <span class="font-semibold">ADA/USDT</span>
+                                        </div>
+                                    </td>
+                                    <td class="p-4">
+                                        <span class="bg-destructive text-destructive-foreground px-2 py-1 rounded text-sm font-semibold">SHORT</span>
+                                    </td>
+                                    <td class="p-4 font-mono">1,250</td>
+                                    <td class="p-4 font-mono">$0.485</td>
+                                    <td class="p-4 font-mono">$0.472</td>
+                                    <td class="p-4">
+                                        <div class="profit-text font-mono font-semibold">+$16.25</div>
+                                        <div class="text-xs text-muted-foreground">+2.7%</div>
+                                    </td>
+                                    <td class="p-4">
+                                        <div class="flex space-x-2">
+                                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">
+                                                Edit
+                                            </button>
+                                            <button class="bg-destructive text-destructive-foreground hover:opacity-90 px-3 py-1 rounded text-sm transition-opacity">
+                                                Close
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Position Management Tools -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Risk Management</h3>
+                        <div class="space-y-4">
+                            <div class="flex justify-between">
+                                <span>Total Exposure</span>
+                                <span class="font-mono" data-mock="true">$6,847.50</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Available Balance</span>
+                                <span class="font-mono" data-mock="true">$3,400.33</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Risk/Reward Ratio</span>
+                                <span class="font-mono profit-text" data-mock="true">1:2.4</span>
+                            </div>
+                            <div class="w-full bg-muted rounded-full h-2">
+                                <div class="bg-primary h-2 rounded-full" style="width: 67%"></div>
+                            </div>
+                            <div class="text-sm text-muted-foreground">67% account utilization</div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Auto Trading</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <span>Stop Loss</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span>Take Profit</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span>Trailing Stop</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- @END_COMPONENT: PositionsTab -->
+            
+            <!-- @COMPONENT: SignalsTab [Trading signals and alerts] -->
+            <div id="signals-content" class="tab-content hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">Trading Signals</h2>
+                    <div class="flex space-x-2">
+                        <select class="bg-secondary border border-border rounded px-3 py-2">
+                            <option>All Signals</option>
+                            <option>LONG Only</option>
+                            <option>SHORT Only</option>
+                        </select>
+                        <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-4 py-2 rounded-lg transition-colors">
+                            <i class="fas fa-filter mr-2"></i>Filter
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Active Signals -->
+                <div class="grid gap-4 mb-6">
+                    <!-- Signal Card 1 -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
+                                    <i class="fas fa-arrow-up text-primary-foreground"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-lg">BTC/USDT</h3>
+                                    <p class="text-sm text-muted-foreground">Strong LONG Signal</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold profit-text">87</div>
+                                <div class="text-sm text-muted-foreground">Confidence</div>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <div class="text-xs text-muted-foreground">Entry</div>
+                                <div class="font-mono font-semibold" data-mock="true">$43,180</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">Stop Loss</div>
+                                <div class="font-mono font-semibold loss-text" data-mock="true">$41,850</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">Take Profit</div>
+                                <div class="font-mono font-semibold profit-text" data-mock="true">$45,200</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">R:R Ratio</div>
+                                <div class="font-mono font-semibold" data-mock="true">1:1.5</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <div class="text-sm text-muted-foreground mb-2">Contributing Modules:</div>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-xs">MA Trend (85)</span>
+                                <span class="bg-accent text-accent-foreground px-2 py-1 rounded text-xs">RSI (78)</span>
+                                <span class="bg-chart-4 text-background px-2 py-1 rounded text-xs">Bollinger (92)</span>
+                                <span class="bg-chart-5 text-background px-2 py-1 rounded text-xs">VWAP (81)</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-2">
+                            <button class="bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:opacity-90 transition-opacity flex-1">
+                                Execute Trade
+                            </button>
+                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-4 py-2 rounded-lg transition-colors">
+                                Add to Watchlist
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Signal Card 2 -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-12 h-12 bg-destructive rounded-full flex items-center justify-center">
+                                    <i class="fas fa-arrow-down text-destructive-foreground"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-lg">ETH/USDT</h3>
+                                    <p class="text-sm text-muted-foreground">Moderate SHORT Signal</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-accent">62</div>
+                                <div class="text-sm text-muted-foreground">Confidence</div>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <div class="text-xs text-muted-foreground">Entry</div>
+                                <div class="font-mono font-semibold" data-mock="true">$2,545</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">Stop Loss</div>
+                                <div class="font-mono font-semibold loss-text" data-mock="true">$2,620</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">Take Profit</div>
+                                <div class="font-mono font-semibold profit-text" data-mock="true">$2,380</div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-muted-foreground">R:R Ratio</div>
+                                <div class="font-mono font-semibold" data-mock="true">1:2.2</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <div class="text-sm text-muted-foreground mb-2">Contributing Modules:</div>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="bg-destructive text-destructive-foreground px-2 py-1 rounded text-xs">RSI (68)</span>
+                                <span class="bg-chart-4 text-background px-2 py-1 rounded text-xs">Stochastic (72)</span>
+                                <span class="bg-muted text-muted-foreground px-2 py-1 rounded text-xs">Volume (45)</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-2">
+                            <button class="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg hover:opacity-90 transition-opacity flex-1">
+                                Execute Trade
+                            </button>
+                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-4 py-2 rounded-lg transition-colors">
+                                Add to Watchlist
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Signal History -->
+                <div class="bg-card rounded-lg border border-border">
+                    <div class="p-6 border-b border-border">
+                        <h3 class="text-lg font-semibold">Recent Signal History</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-muted">
+                                <tr>
+                                    <th class="text-left p-4 font-semibold text-sm">Time</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Pair</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Signal</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Confidence</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Status</th>
+                                    <th class="text-left p-4 font-semibold text-sm">Result</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-border">
+                                <tr data-mock="true">
+                                    <td class="p-4 font-mono text-sm">14:32:15</td>
+                                    <td class="p-4">BTC/USDT</td>
+                                    <td class="p-4">
+                                        <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-xs">LONG</span>
+                                    </td>
+                                    <td class="p-4">87%</td>
+                                    <td class="p-4">
+                                        <span class="bg-accent text-accent-foreground px-2 py-1 rounded text-xs">Active</span>
+                                    </td>
+                                    <td class="p-4 profit-text font-mono">+2.3%</td>
+                                </tr>
+                                <tr data-mock="true">
+                                    <td class="p-4 font-mono text-sm">13:45:22</td>
+                                    <td class="p-4">ETH/USDT</td>
+                                    <td class="p-4">
+                                        <span class="bg-destructive text-destructive-foreground px-2 py-1 rounded text-xs">SHORT</span>
+                                    </td>
+                                    <td class="p-4">72%</td>
+                                    <td class="p-4">
+                                        <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-xs">Closed</span>
+                                    </td>
+                                    <td class="p-4 profit-text font-mono">+1.8%</td>
+                                </tr>
+                                <tr data-mock="true">
+                                    <td class="p-4 font-mono text-sm">12:18:09</td>
+                                    <td class="p-4">ADA/USDT</td>
+                                    <td class="p-4">
+                                        <span class="bg-primary text-primary-foreground px-2 py-1 rounded text-xs">LONG</span>
+                                    </td>
+                                    <td class="p-4">65%</td>
+                                    <td class="p-4">
+                                        <span class="bg-destructive text-destructive-foreground px-2 py-1 rounded text-xs">Stopped</span>
+                                    </td>
+                                    <td class="p-4 loss-text font-mono">-0.8%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <!-- @END_COMPONENT: SignalsTab -->
+            
+            <!-- @COMPONENT: AnalysisTab [Pair analysis tools] -->
+            <div id="analysis-content" class="tab-content hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">Pair Analysis</h2>
+                    <div class="flex items-center space-x-4">
+                        <select class="bg-secondary border border-border rounded px-3 py-2">
+                            <option>BTC/USDT</option>
+                            <option>ETH/USDT</option>
+                            <option>BNB/USDT</option>
+                            <option>ADA/USDT</option>
+                            <option>SOL/USDT</option>
+                        </select>
+                        <button class="bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:opacity-90 transition-opacity">
+                            Analyze
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Price Info -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">BTC/USDT</h3>
+                        <div class="space-y-4">
+                            <div class="flex justify-between">
+                                <span>Current Price</span>
+                                <span class="font-mono font-semibold" data-mock="true">$43,247.50</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>24h Change</span>
+                                <span class="font-mono profit-text" data-mock="true">+$987.30 (+2.3%)</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>24h Volume</span>
+                                <span class="font-mono" data-mock="true">28,451.82 BTC</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Market Cap</span>
+                                <span class="font-mono" data-mock="true">$847.2B</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Technical Levels -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Technical Levels</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Resistance 3</span>
+                                <span class="font-mono text-sm loss-text" data-mock="true">$45,820</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Resistance 2</span>
+                                <span class="font-mono text-sm loss-text" data-mock="true">$44,650</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Resistance 1</span>
+                                <span class="font-mono text-sm loss-text" data-mock="true">$43,890</span>
+                            </div>
+                            
+                            <div class="border-t border-b border-border py-2">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold">Current</span>
+                                    <span class="font-mono font-semibold" data-mock="true">$43,247</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Support 1</span>
+                                <span class="font-mono text-sm profit-text" data-mock="true">$42,180</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Support 2</span>
+                                <span class="font-mono text-sm profit-text" data-mock="true">$41,420</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-sm">Support 3</span>
+                                <span class="font-mono text-sm profit-text" data-mock="true">$40,150</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Module Analysis -->
+                    <div class="bg-card rounded-lg p-6 border border-border">
+                        <h3 class="text-lg font-semibold mb-4">Module Analysis</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm">Trend Score</span>
+                                    <span class="text-sm font-semibold">Strong Bullish</span>
+                                </div>
+                                <div class="w-full bg-muted rounded-full h-2">
+                                    <div class="bg-primary h-2 rounded-full" style="width: 82%"></div>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm">Momentum</span>
+                                    <span class="text-sm font-semibold">Bullish</span>
+                                </div>
+                                <div class="w-full bg-muted rounded-full h-2">
+                                    <div class="bg-accent h-2 rounded-full" style="width: 68%"></div>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm">Volatility</span>
+                                    <span class="text-sm font-semibold">Moderate</span>
+                                </div>
+                                <div class="w-full bg-muted rounded-full h-2">
+                                    <div class="bg-chart-4 h-2 rounded-full" style="width: 45%"></div>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm">Volume</span>
+                                    <span class="text-sm font-semibold">Above Average</span>
+                                </div>
+                                <div class="w-full bg-muted rounded-full h-2">
+                                    <div class="bg-chart-5 h-2 rounded-full" style="width: 72%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-6 p-4 bg-primary/10 rounded-lg border border-primary/20">
+                            <div class="text-sm font-semibold text-primary mb-1">Trading Recommendation</div>
+                            <div class="text-sm text-muted-foreground">Strong LONG bias with 85% confidence. Consider entry on pullback to $42,800 level.</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Detailed Analysis Chart -->
+                <div class="mt-6 bg-card rounded-lg p-6 border border-border">
+                    <div class="flex items-center justify-between mb-6">
+                        <h3 class="text-lg font-semibold">Detailed Chart Analysis</h3>
+                        <div class="flex space-x-2">
+                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">1H</button>
+                            <button class="bg-primary text-primary-foreground px-3 py-1 rounded text-sm">4H</button>
+                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">1D</button>
+                            <button class="bg-secondary hover:bg-accent hover:text-accent-foreground px-3 py-1 rounded text-sm transition-colors">1W</button>
+                        </div>
+                    </div>
+                    <div class="relative h-96">
+                        <canvas id="analysisChart" class="w-full h-full"></canvas>
+                    </div>
+                </div>
+            </div>
+            <!-- @END_COMPONENT: AnalysisTab -->
+        </main>
+        <!-- @END_COMPONENT: MainContent -->
+    </div>
+
+    <script>
+    (function() {
+        // Tab Management
+        window.showTab = function(tabName) {
+            // Hide all tab content
+            const allContent = document.querySelectorAll('.tab-content');
+            allContent.forEach(content => content.classList.add('hidden'));
+            
+            // Remove active class from all tabs
+            const allTabs = document.querySelectorAll('[id^="tab-"]');
+            allTabs.forEach(tab => {
+                tab.classList.remove('tab-active');
+                tab.classList.add('hover:bg-secondary');
+            });
+            
+            // Show selected content
+            document.getElementById(tabName + '-content').classList.remove('hidden');
+            
+            // Add active class to selected tab
+            const selectedTab = document.getElementById('tab-' + tabName);
+            selectedTab.classList.add('tab-active');
+            selectedTab.classList.remove('hover:bg-secondary');
+        };
+
+        // Initialize Charts
+        function initializeCharts() {
+            // Price Chart
+            const priceCtx = document.getElementById('priceChart');
+            if (priceCtx) {
+                new Chart(priceCtx, {
+                    type: 'line',
+                    data: {
+                        labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'],
+                        datasets: [{
+                            label: 'BTC/USDT',
+                            data: [42150, 42890, 43200, 42980, 43247, 43180, 43247],
+                            borderColor: 'hsl(165 85% 41%)',
+                            backgroundColor: 'hsla(165 85% 41% / 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointBackgroundColor: 'hsl(165 85% 41%)',
+                            pointBorderColor: 'hsl(240 15% 6%)',
+                            pointBorderWidth: 2,
+                            pointRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: {
+                                    color: 'hsl(240 8% 18%)',
+                                    borderColor: 'hsl(240 8% 18%)'
+                                },
+                                ticks: {
+                                    color: 'hsl(240 6% 60%)'
+                                }
+                            },
+                            y: {
+                                grid: {
+                                    color: 'hsl(240 8% 18%)',
+                                    borderColor: 'hsl(240 8% 18%)'
+                                },
+                                ticks: {
+                                    color: 'hsl(240 6% 60%)'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Analysis Chart
+            const analysisCtx = document.getElementById('analysisChart');
+            if (analysisCtx) {
+                new Chart(analysisCtx, {
+                    type: 'candlestick',
+                    data: {
+                        datasets: [{
+                            label: 'BTC/USDT',
+                            data: [
+                                {x: '2024-01-01', o: 42000, h: 42500, l: 41800, c: 42150},
+                                {x: '2024-01-02', o: 42150, h: 43000, l: 42000, c: 42890},
+                                {x: '2024-01-03', o: 42890, h: 43400, l: 42700, c: 43200},
+                                {x: '2024-01-04', o: 43200, h: 43300, l: 42800, c: 42980},
+                                {x: '2024-01-05', o: 42980, h: 43500, l: 42900, c: 43247}
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Real-time Updates Simulation
+        function simulateRealTimeUpdates() {
+            // TODO: Implement WebSocket connection for real-time data
+            // TODO: Update prices, positions, and signals in real-time
+            // This would connect to Binance WebSocket feeds
+            
+            // Simulated price updates
+            setInterval(() => {
+                const priceElements = document.querySelectorAll('[data-bind*="price"]');
+                // TODO: Update with real price data from WebSocket
+            }, 1000);
+        }
+
+        // Initialize everything when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCharts();
+            simulateRealTimeUpdates();
+            
+            // Show dashboard by default
+            showTab('dashboard');
+        });
+    })();
+    </script>
+</body>
+</html>

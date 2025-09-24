@@ -1,0 +1,866 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Modular Bot - Trading Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    borderRadius: {
+                        lg: "var(--radius)",
+                        md: "calc(var(--radius) - 2px)",
+                        sm: "calc(var(--radius) - 4px)",
+                    },
+                    colors: {
+                        background: "var(--background)",
+                        foreground: "var(--foreground)",
+                        card: {
+                            DEFAULT: "var(--card)",
+                            foreground: "var(--card-foreground)",
+                        },
+                        popover: {
+                            DEFAULT: "var(--popover)",
+                            foreground: "var(--popover-foreground)",
+                        },
+                        primary: {
+                            DEFAULT: "var(--primary)",
+                            foreground: "var(--primary-foreground)",
+                        },
+                        secondary: {
+                            DEFAULT: "var(--secondary)",
+                            foreground: "var(--secondary-foreground)",
+                        },
+                        muted: {
+                            DEFAULT: "var(--muted)",
+                            foreground: "var(--muted-foreground)",
+                        },
+                        accent: {
+                            DEFAULT: "var(--accent)",
+                            foreground: "var(--accent-foreground)",
+                        },
+                        destructive: {
+                            DEFAULT: "var(--destructive)",
+                            foreground: "var(--destructive-foreground)",
+                        },
+                        border: "var(--border)",
+                        input: "var(--input)",
+                        ring: "var(--ring)",
+                        success: "var(--success)",
+                        warning: "var(--warning)",
+                        chart: {
+                            "1": "var(--chart-1)",
+                            "2": "var(--chart-2)",
+                            "3": "var(--chart-3)",
+                            "4": "var(--chart-4)",
+                            "5": "var(--chart-5)",
+                        }
+                    },
+                    fontFamily: {
+                        sans: ["var(--font-sans)"],
+                        mono: ["var(--font-mono)"],
+                    }
+                },
+            }
+        };
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --background: hsl(220 27% 8%);
+            --foreground: hsl(220 15% 90%);
+            --card: hsl(220 25% 12%);
+            --card-foreground: hsl(220 15% 88%);
+            --popover: hsl(220 25% 12%);
+            --popover-foreground: hsl(220 15% 88%);
+            --primary: hsl(199 89% 48%);
+            --primary-foreground: hsl(220 15% 95%);
+            --secondary: hsl(220 20% 18%);
+            --secondary-foreground: hsl(220 15% 82%);
+            --muted: hsl(220 20% 15%);
+            --muted-foreground: hsl(220 10% 55%);
+            --accent: hsl(220 20% 18%);
+            --accent-foreground: hsl(220 15% 82%);
+            --destructive: hsl(0 72% 51%);
+            --destructive-foreground: hsl(220 15% 95%);
+            --border: hsl(220 20% 20%);
+            --input: hsl(220 20% 18%);
+            --ring: hsl(199 89% 48%);
+            --success: hsl(142 76% 36%);
+            --warning: hsl(48 96% 53%);
+            --chart-1: hsl(199 89% 48%);
+            --chart-2: hsl(142 76% 36%);
+            --chart-3: hsl(48 96% 53%);
+            --chart-4: hsl(280 65% 60%);
+            --chart-5: hsl(12 76% 61%);
+            --font-sans: 'Inter', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+            --radius: 8px;
+        }
+
+        * {
+            border-color: var(--border);
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--background);
+            color: var(--foreground);
+        }
+
+        .font-mono {
+            font-family: var(--font-mono);
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--muted);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--muted-foreground);
+        }
+
+        /* Tab styles */
+        .tab-active {
+            background-color: var(--primary);
+            color: var(--primary-foreground);
+        }
+
+        .tab-inactive {
+            background-color: var(--muted);
+            color: var(--muted-foreground);
+        }
+
+        .tab-inactive:hover {
+            background-color: var(--accent);
+            color: var(--accent-foreground);
+        }
+
+        /* Price change colors */
+        .price-up {
+            color: var(--success);
+        }
+
+        .price-down {
+            color: var(--destructive);
+        }
+
+        .price-neutral {
+            color: var(--muted-foreground);
+        }
+
+        /* Status indicators */
+        .status-online {
+            color: var(--success);
+        }
+
+        .status-offline {
+            color: var(--destructive);
+        }
+
+        .status-pending {
+            color: var(--warning);
+        }
+
+        /* Data table improvements */
+        .data-table th {
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted-foreground);
+            padding: 12px 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table td {
+            font-size: 13px;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        .data-table tr:hover {
+            background-color: var(--muted);
+        }
+
+        /* Input improvements */
+        input, select, textarea {
+            background-color: var(--input);
+            border: 1px solid var(--border);
+            color: var(--foreground);
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--ring);
+            box-shadow: 0 0 0 2px hsl(199 89% 48% / 0.2);
+        }
+    </style>
+</head>
+<body class="bg-background text-foreground min-h-screen">
+    <!-- @COMPONENT: MainLayout -->
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <!-- @COMPONENT: Sidebar -->
+        <div class="w-16 bg-card border-r border-border flex flex-col items-center py-4 space-y-4">
+            <div class="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                <i class="fas fa-robot text-primary-foreground text-lg"></i>
+            </div>
+            
+            <nav class="flex flex-col space-y-2">
+                <button class="w-10 h-10 rounded-lg bg-primary text-primary-foreground flex items-center justify-center" title="Dashboard">
+                    <i class="fas fa-chart-line"></i>
+                </button>
+                <button class="w-10 h-10 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center justify-center" title="Positions">
+                    <i class="fas fa-wallet"></i>
+                </button>
+                <button class="w-10 h-10 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center justify-center" title="Signals">
+                    <i class="fas fa-signal"></i>
+                </button>
+                <button class="w-10 h-10 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center justify-center" title="Analysis">
+                    <i class="fas fa-microscope"></i>
+                </button>
+                <button class="w-10 h-10 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center justify-center" title="Settings">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <button class="w-10 h-10 rounded-lg bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center justify-center" title="Telegram">
+                    <i class="fab fa-telegram"></i>
+                </button>
+            </nav>
+
+            <div class="mt-auto">
+                <div class="w-2 h-2 bg-success rounded-full" title="Connected"></div>
+            </div>
+        </div>
+        <!-- @END_COMPONENT: Sidebar -->
+
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+            <!-- Header -->
+            <!-- @COMPONENT: Header -->
+            <header class="h-16 bg-card border-b border-border flex items-center justify-between px-6">
+                <div class="flex items-center space-x-4">
+                    <h1 class="text-xl font-semibold">Crypto Modular Bot</h1>
+                    <div class="flex items-center space-x-2 text-sm text-muted-foreground">
+                        <span class="flex items-center">
+                            <i class="fas fa-circle text-success mr-2"></i>
+                            Connected
+                        </span>
+                        <span>•</span>
+                        <span>15 Pairs Active</span>
+                        <span>•</span>
+                        <span data-bind="currentTime">14:23:45 UTC</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <div class="text-right">
+                        <div class="text-sm text-muted-foreground">Total Balance</div>
+                        <div class="text-lg font-semibold font-mono" data-bind="totalBalance">$12,450.67</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-sm text-muted-foreground">24h P&L</div>
+                        <div class="text-lg font-semibold font-mono price-up" data-bind="dailyPnL">+$234.12</div>
+                    </div>
+                    <button class="px-4 py-2 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 transition-colors" data-event="click:closeAllPositions">
+                        <i class="fas fa-stop mr-2"></i>
+                        Close All
+                    </button>
+                </div>
+            </header>
+            <!-- @END_COMPONENT: Header -->
+
+            <!-- Tab Navigation -->
+            <!-- @COMPONENT: TabNavigation -->
+            <div class="bg-card border-b border-border">
+                <nav class="flex px-6">
+                    <button class="tab-active px-4 py-3 text-sm font-medium border-b-2 border-primary">
+                        Dashboard
+                    </button>
+                    <button class="tab-inactive px-4 py-3 text-sm font-medium hover:text-foreground">
+                        Positions
+                    </button>
+                    <button class="tab-inactive px-4 py-3 text-sm font-medium hover:text-foreground">
+                        Signals
+                    </button>
+                    <button class="tab-inactive px-4 py-3 text-sm font-medium hover:text-foreground">
+                        Pair Analysis
+                    </button>
+                    <button class="tab-inactive px-4 py-3 text-sm font-medium hover:text-foreground">
+                        Settings
+                    </button>
+                    <button class="tab-inactive px-4 py-3 text-sm font-medium hover:text-foreground">
+                        Telegram Setup
+                    </button>
+                </nav>
+            </div>
+            <!-- @END_COMPONENT: TabNavigation -->
+
+            <!-- Main Content Area -->
+            <div class="flex-1 overflow-auto">
+                <!-- @COMPONENT: DashboardContent -->
+                <div class="p-6 space-y-6">
+                    <!-- Statistics Overview -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-card rounded-lg p-4 border border-border">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-muted-foreground">Active Positions</p>
+                                    <p class="text-2xl font-bold" data-bind="activePositions">7</p>
+                                </div>
+                                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-chart-line text-primary"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-card rounded-lg p-4 border border-border">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-muted-foreground">Win Rate</p>
+                                    <p class="text-2xl font-bold price-up" data-bind="winRate">68.3%</p>
+                                </div>
+                                <div class="w-12 h-12 bg-success/10 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-trophy text-success"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-card rounded-lg p-4 border border-border">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-muted-foreground">Total Trades</p>
+                                    <p class="text-2xl font-bold" data-bind="totalTrades">1,247</p>
+                                </div>
+                                <div class="w-12 h-12 bg-chart-3/10 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-exchange-alt text-warning"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-card rounded-lg p-4 border border-border">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-muted-foreground">Avg Profit</p>
+                                    <p class="text-2xl font-bold price-up" data-bind="avgProfit">$18.75</p>
+                                </div>
+                                <div class="w-12 h-12 bg-success/10 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-dollar-sign text-success"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Dashboard Grid -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Pairs Overview -->
+                        <div class="lg:col-span-2">
+                            <div class="bg-card rounded-lg border border-border">
+                                <div class="p-4 border-b border-border">
+                                    <div class="flex items-center justify-between">
+                                        <h3 class="text-lg font-semibold">Active Pairs</h3>
+                                        <div class="flex items-center space-x-2">
+                                            <button class="px-3 py-1 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">
+                                                <i class="fas fa-filter mr-1"></i>
+                                                Filter
+                                            </button>
+                                            <button class="px-3 py-1 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">
+                                                <i class="fas fa-sync mr-1"></i>
+                                                Refresh
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="overflow-x-auto">
+                                    <table class="w-full data-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="text-left">Pair</th>
+                                                <th class="text-right">Price</th>
+                                                <th class="text-right">24h %</th>
+                                                <th class="text-center">Signal</th>
+                                                <th class="text-center">Confidence</th>
+                                                <th class="text-center">Position</th>
+                                                <th class="text-right">P&L</th>
+                                                <th class="text-center">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- @MAP: pairs.map(pair => ( -->
+                                            <tr data-mock="true">
+                                                <td>
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-8 h-8 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-xs font-bold text-white">BTC</div>
+                                                        <span class="font-medium">BTCUSDT</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-right font-mono">$43,256.78</td>
+                                                <td class="text-right font-mono price-up">+2.34%</td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs font-medium">LONG</span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="flex items-center justify-center">
+                                                        <div class="w-12 bg-muted rounded-full h-2">
+                                                            <div class="w-8/12 bg-success h-2 rounded-full"></div>
+                                                        </div>
+                                                        <span class="ml-2 text-xs font-mono">73%</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs">LONG</span>
+                                                </td>
+                                                <td class="text-right font-mono price-up">+$125.67</td>
+                                                <td class="text-center">
+                                                    <button class="text-destructive hover:text-destructive/80" data-event="click:closePosition">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+
+                                            <tr data-mock="true">
+                                                <td>
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-xs font-bold text-white">ETH</div>
+                                                        <span class="font-medium">ETHUSDT</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-right font-mono">$2,567.89</td>
+                                                <td class="text-right font-mono price-down">-1.23%</td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-muted text-muted-foreground rounded-md text-xs font-medium">WAIT</span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="flex items-center justify-center">
+                                                        <div class="w-12 bg-muted rounded-full h-2">
+                                                            <div class="w-5/12 bg-warning h-2 rounded-full"></div>
+                                                        </div>
+                                                        <span class="ml-2 text-xs font-mono">45%</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-muted text-muted-foreground rounded-md text-xs">-</span>
+                                                </td>
+                                                <td class="text-right font-mono price-neutral">$0.00</td>
+                                                <td class="text-center">
+                                                    <button class="text-primary hover:text-primary/80" data-event="click:openPosition">
+                                                        <i class="fas fa-plus"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+
+                                            <tr data-mock="true">
+                                                <td>
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-8 h-8 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-xs font-bold text-white">SOL</div>
+                                                        <span class="font-medium">SOLUSDT</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-right font-mono">$98.45</td>
+                                                <td class="text-right font-mono price-up">+5.67%</td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-destructive/10 text-destructive rounded-md text-xs font-medium">SHORT</span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="flex items-center justify-center">
+                                                        <div class="w-12 bg-muted rounded-full h-2">
+                                                            <div class="w-9/12 bg-destructive h-2 rounded-full"></div>
+                                                        </div>
+                                                        <span class="ml-2 text-xs font-mono">78%</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-destructive/10 text-destructive rounded-md text-xs">SHORT</span>
+                                                </td>
+                                                <td class="text-right font-mono price-down">-$45.23</td>
+                                                <td class="text-center">
+                                                    <button class="text-destructive hover:text-destructive/80" data-event="click:closePosition">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+
+                                            <tr data-mock="true">
+                                                <td>
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-8 h-8 bg-gradient-to-br from-red-400 to-pink-500 rounded-full flex items-center justify-center text-xs font-bold text-white">ADA</div>
+                                                        <span class="font-medium">ADAUSDT</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-right font-mono">$0.4567</td>
+                                                <td class="text-right font-mono price-up">+3.21%</td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs font-medium">LONG</span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="flex items-center justify-center">
+                                                        <div class="w-12 bg-muted rounded-full h-2">
+                                                            <div class="w-7/12 bg-success h-2 rounded-full"></div>
+                                                        </div>
+                                                        <span class="ml-2 text-xs font-mono">65%</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-muted text-muted-foreground rounded-md text-xs">-</span>
+                                                </td>
+                                                <td class="text-right font-mono price-neutral">$0.00</td>
+                                                <td class="text-center">
+                                                    <button class="text-primary hover:text-primary/80" data-event="click:openPosition">
+                                                        <i class="fas fa-plus"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+
+                                            <tr data-mock="true">
+                                                <td>
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-xs font-bold text-white">AVX</div>
+                                                        <span class="font-medium">AVAXUSDT</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-right font-mono">$34.56</td>
+                                                <td class="text-right font-mono price-down">-0.89%</td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-muted text-muted-foreground rounded-md text-xs font-medium">WAIT</span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="flex items-center justify-center">
+                                                        <div class="w-12 bg-muted rounded-full h-2">
+                                                            <div class="w-4/12 bg-warning h-2 rounded-full"></div>
+                                                        </div>
+                                                        <span class="ml-2 text-xs font-mono">38%</span>
+                                                    </div>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs">LONG</span>
+                                                </td>
+                                                <td class="text-right font-mono price-up">+$78.90</td>
+                                                <td class="text-center">
+                                                    <button class="text-destructive hover:text-destructive/80" data-event="click:closePosition">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <!-- @END_MAP )) -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel -->
+                        <div class="space-y-6">
+                            <!-- Quick Trade -->
+                            <div class="bg-card rounded-lg border border-border">
+                                <div class="p-4 border-b border-border">
+                                    <h3 class="text-lg font-semibold">Quick Trade</h3>
+                                </div>
+                                <div class="p-4 space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-muted-foreground mb-2">Symbol</label>
+                                        <select class="w-full px-3 py-2 rounded-md text-sm">
+                                            <option>BTCUSDT</option>
+                                            <option>ETHUSDT</option>
+                                            <option>SOLUSDT</option>
+                                            <option>ADAUSDT</option>
+                                            <option>AVAXUSDT</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-sm font-medium text-muted-foreground mb-2">Size</label>
+                                            <input type="number" placeholder="0.01" class="w-full px-3 py-2 rounded-md text-sm" data-mock="true">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-muted-foreground mb-2">Leverage</label>
+                                            <select class="w-full px-3 py-2 rounded-md text-sm">
+                                                <option>1x</option>
+                                                <option>3x</option>
+                                                <option>5x</option>
+                                                <option>10x</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-sm font-medium text-muted-foreground mb-2">Stop Loss</label>
+                                            <input type="number" placeholder="%" class="w-full px-3 py-2 rounded-md text-sm" data-mock="true">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-muted-foreground mb-2">Take Profit</label>
+                                            <input type="number" placeholder="%" class="w-full px-3 py-2 rounded-md text-sm" data-mock="true">
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <button class="px-4 py-2 bg-success text-white rounded-md hover:bg-success/90 transition-colors" data-event="click:placeLongOrder">
+                                            <i class="fas fa-arrow-up mr-2"></i>
+                                            Long
+                                        </button>
+                                        <button class="px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 transition-colors" data-event="click:placeShortOrder">
+                                            <i class="fas fa-arrow-down mr-2"></i>
+                                            Short
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Active Modules -->
+                            <div class="bg-card rounded-lg border border-border">
+                                <div class="p-4 border-b border-border">
+                                    <h3 class="text-lg font-semibold">Active Modules</h3>
+                                </div>
+                                <div class="p-4 space-y-3">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 bg-success rounded-full"></div>
+                                            <span class="text-sm">RSI Module</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">Weight: 30%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 bg-success rounded-full"></div>
+                                            <span class="text-sm">MACD Module</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">Weight: 25%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 bg-success rounded-full"></div>
+                                            <span class="text-sm">MA Module</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">Weight: 20%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 bg-warning rounded-full"></div>
+                                            <span class="text-sm">Bollinger Bands</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">Weight: 15%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 bg-destructive rounded-full"></div>
+                                            <span class="text-sm">Volume Profile</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">Weight: 10%</span>
+                                    </div>
+
+                                    <div class="pt-3 border-t border-border">
+                                        <button class="w-full px-3 py-2 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">
+                                            <i class="fas fa-cog mr-2"></i>
+                                            Configure Modules
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Recent Signals -->
+                            <div class="bg-card rounded-lg border border-border">
+                                <div class="p-4 border-b border-border">
+                                    <h3 class="text-lg font-semibold">Recent Signals</h3>
+                                </div>
+                                <div class="p-4 space-y-3">
+                                    <div class="flex items-center justify-between">
+                                        <div>
+                                            <div class="text-sm font-medium">BTCUSDT</div>
+                                            <div class="text-xs text-muted-foreground">2 minutes ago</div>
+                                        </div>
+                                        <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs">LONG 73%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div>
+                                            <div class="text-sm font-medium">SOLUSDT</div>
+                                            <div class="text-xs text-muted-foreground">5 minutes ago</div>
+                                        </div>
+                                        <span class="px-2 py-1 bg-destructive/10 text-destructive rounded-md text-xs">SHORT 78%</span>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between">
+                                        <div>
+                                            <div class="text-sm font-medium">ADAUSDT</div>
+                                            <div class="text-xs text-muted-foreground">8 minutes ago</div>
+                                        </div>
+                                        <span class="px-2 py-1 bg-success/10 text-success rounded-md text-xs">LONG 65%</span>
+                                    </div>
+                                    
+                                    <div class="pt-3 border-t border-border">
+                                        <button class="w-full px-3 py-2 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">
+                                            <i class="fas fa-list mr-2"></i>
+                                            View All Signals
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Chart -->
+                    <div class="bg-card rounded-lg border border-border">
+                        <div class="p-4 border-b border-border">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold">Portfolio Performance</h3>
+                                <div class="flex items-center space-x-2">
+                                    <button class="px-3 py-1 bg-primary text-primary-foreground rounded-md text-sm">1D</button>
+                                    <button class="px-3 py-1 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">7D</button>
+                                    <button class="px-3 py-1 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">30D</button>
+                                    <button class="px-3 py-1 bg-muted text-muted-foreground rounded-md text-sm hover:bg-accent hover:text-accent-foreground">ALL</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <!-- Chart placeholder -->
+                            <div class="h-64 bg-muted/20 rounded-lg flex items-center justify-center">
+                                <div class="text-center">
+                                    <i class="fas fa-chart-line text-4xl text-muted-foreground mb-4"></i>
+                                    <p class="text-muted-foreground">Performance Chart</p>
+                                    <p class="text-sm text-muted-foreground"><!-- CUSTOM ICON: Trading chart visualization --></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- @END_COMPONENT: DashboardContent -->
+            </div>
+        </div>
+    </div>
+    <!-- @END_COMPONENT: MainLayout -->
+
+    <script>
+        (function() {
+            // TODO: Implement real-time data updates, WebSocket connections, and trading logic
+            
+            // Mock data for demonstration
+            let mockData = {
+                currentTime: new Date().toLocaleTimeString('en-US', { timeZone: 'UTC', hour12: false }),
+                totalBalance: 12450.67,
+                dailyPnL: 234.12,
+                activePositions: 7,
+                winRate: 68.3,
+                totalTrades: 1247,
+                avgProfit: 18.75
+            };
+
+            // Update time every second
+            setInterval(() => {
+                mockData.currentTime = new Date().toLocaleTimeString('en-US', { timeZone: 'UTC', hour12: false });
+                updateDataBindings();
+            }, 1000);
+
+            // Update data bindings
+            function updateDataBindings() {
+                document.querySelectorAll('[data-bind]').forEach(element => {
+                    const binding = element.getAttribute('data-bind');
+                    if (mockData.hasOwnProperty(binding)) {
+                        let value = mockData[binding];
+                        if (typeof value === 'number' && binding.includes('Balance') || binding.includes('PnL') || binding.includes('Profit')) {
+                            value = '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2 });
+                            if (binding.includes('PnL') && mockData[binding] > 0) {
+                                value = '+' + value;
+                            }
+                        } else if (typeof value === 'number' && binding.includes('Rate')) {
+                            value = value + '%';
+                        }
+                        element.textContent = value;
+                    }
+                });
+            }
+
+            // Initial data binding update
+            updateDataBindings();
+
+            // Tab switching functionality
+            document.querySelectorAll('.tab-inactive, .tab-active').forEach(tab => {
+                tab.addEventListener('click', function() {
+                    // Remove active class from all tabs
+                    document.querySelectorAll('.tab-active').forEach(t => {
+                        t.className = t.className.replace('tab-active', 'tab-inactive');
+                    });
+                    
+                    // Add active class to clicked tab
+                    this.className = this.className.replace('tab-inactive', 'tab-active');
+                    
+                    // TODO: Implement tab content switching
+                });
+            });
+
+            // Event handlers for trading actions
+            document.addEventListener('click', function(e) {
+                const target = e.target.closest('[data-event]');
+                if (!target) return;
+
+                const eventAction = target.getAttribute('data-event');
+                
+                switch(eventAction) {
+                    case 'click:closeAllPositions':
+                        if (confirm('Are you sure you want to close all positions?')) {
+                            // TODO: Implement close all positions logic
+                            console.log('Closing all positions...');
+                        }
+                        break;
+                    case 'click:closePosition':
+                        // TODO: Implement individual position closing
+                        console.log('Closing position...');
+                        break;
+                    case 'click:openPosition':
+                        // TODO: Implement position opening logic
+                        console.log('Opening position...');
+                        break;
+                    case 'click:placeLongOrder':
+                        // TODO: Implement long order placement
+                        console.log('Placing long order...');
+                        break;
+                    case 'click:placeShortOrder':
+                        // TODO: Implement short order placement
+                        console.log('Placing short order...');
+                        break;
+                }
+            });
+
+            // Simulate real-time price updates
+            setInterval(() => {
+                document.querySelectorAll('.data-table tbody tr').forEach(row => {
+                    const priceCell = row.cells[1];
+                    if (priceCell && Math.random() > 0.7) {
+                        // Simulate price changes
+                        let currentPrice = parseFloat(priceCell.textContent.replace('$', '').replace(',', ''));
+                        let change = (Math.random() - 0.5) * 0.02; // ±1% change
+                        let newPrice = currentPrice * (1 + change);
+                        
+                        if (priceCell.textContent.includes('.')) {
+                            let decimals = priceCell.textContent.split('.')[1].length;
+                            priceCell.textContent = '$' + newPrice.toFixed(decimals);
+                        } else {
+                            priceCell.textContent = '$' + Math.round(newPrice);
+                        }
+                    }
+                });
+            }, 2000);
+
+        })();
+    </script>
+</body>
+</html>

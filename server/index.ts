@@ -1,0 +1,116 @@
+// server/index.ts
+import "dotenv/config";
+import express, { type Request, type Response, type NextFunction } from "express";
+import { createServer } from "http";
+import { WebSocketServer, WebSocket } from "ws";
+
+import { setupVite, serveStatic, log } from "./vite";
+import { registerRoutes } from "./routes";
+
+import { PaperBroker } from "./paper/PaperBroker";
+import type { Broker } from "./broker/types";
+
+import { BinanceService } from "./services/binanceService";
+import { TelegramService } from "./services/telegramService";
+import { IndicatorService } from "./services/indicatorService";
+import { setLastPrice } from "./paper/PriceFeed";
+
+// --- Express app + HTTP szerver ---
+const app = express();
+app.use(express.json());
+
+const httpServer = createServer(app);
+
+// --- WebSocket szerver (real-time broadcast a kliensnek) ---
+const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+const clients = new Set<WebSocket>();
+
+const broadcast = (data: any) => {
+    const message = JSON.stringify(data);
+    for (const ws of clients) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(message);
+        }
+    }
+};
+
+wss.on("connection", (ws) => {
+    clients.add(ws);
+    console.log("WebSocket client connected");
+    ws.on("close", () => {
+        clients.delete(ws);
+        console.log("WebSocket client disconnected");
+    });
+    ws.send(JSON.stringify({ type: "connection", status: "connected" }));
+});
+
+// --- Indítási folyamat ---
+(async () => {
+    const PORT = Number(process.env.PORT || 5000);
+
+    // Broker kiválasztás (alapértelmezetten paper mód)
+    const usePaper = (process.env.PAPER_TRADING ?? "true") !== "false";
+    let broker: Broker;
+    if (usePaper) {
+        broker = new PaperBroker();
+    } else {
+        // Csak akkor importáljuk a real brokert, ha tényleg kell
+        const { RealBinanceBroker } = await import("./real/RealBinanceBroker");
+        broker = new RealBinanceBroker();
+    }
+
+    // Szervizek
+    const binanceService = new BinanceService();
+    const telegramService = new TelegramService();
+    const indicatorService = new IndicatorService();
+
+    // Párlisták inicializálása + price stream indítása → broadcast + ár-cache
+    await binanceService.initializeTradingPairs();
+    binanceService.startPriceStreams((data) => {
+        // data: { symbol, price, ... }
+        if (data?.symbol && data?.price) {
+            const px = Number(data.price);
+            if (!Number.isNaN(px)) setLastPrice(data.symbol, px);
+        }
+        broadcast({ type: "price_update", data });
+    });
+
+    // REST route-ok regisztrálása (körimport nélkül, függőségek átadása)
+    registerRoutes(app, {
+        broker,
+        binanceService,
+        telegramService,
+        indicatorService,
+        broadcast,
+    });
+
+    // Hiba middleware
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+        const status = err.status || err.statusCode || 500;
+        const message = err.message || "Internal Server Error";
+        res.status(status).json({ message });
+        console.error("Unhandled error:", err);
+    });
+
+    // Vite dev/production kiszolgálás
+    if (app.get("env") === "development") {
+        await setupVite(app, httpServer);
+    } else {
+        serveStatic(app);
+    }
+
+    // Listen
+    httpServer.listen(
+        {
+            port: PORT,
+            host: "0.0.0.0",
+            reusePort: true,
+        },
+        () => {
+            log(`serving on port ${PORT}`);
+        }
+    );
+})().catch((err) => {
+    console.error("Fatal startup error:", err);
+    process.exit(1);
+});

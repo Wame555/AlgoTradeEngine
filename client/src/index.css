@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(220, 27%, 8%);
+  --foreground: hsl(220, 15%, 90%);
+  --card: hsl(220, 25%, 12%);
+  --card-foreground: hsl(220, 15%, 88%);
+  --popover: hsl(220, 25%, 12%);
+  --popover-foreground: hsl(220, 15%, 88%);
+  --primary: hsl(199, 89%, 48%);
+  --primary-foreground: hsl(220, 15%, 95%);
+  --secondary: hsl(220, 20%, 18%);
+  --secondary-foreground: hsl(220, 15%, 82%);
+  --muted: hsl(220, 20%, 15%);
+  --muted-foreground: hsl(220, 10%, 55%);
+  --accent: hsl(220, 20%, 18%);
+  --accent-foreground: hsl(220, 15%, 82%);
+  --destructive: hsl(0, 72%, 51%);
+  --destructive-foreground: hsl(220, 15%, 95%);
+  --border: hsl(220, 20%, 20%);
+  --input: hsl(220, 20%, 18%);
+  --ring: hsl(199, 89%, 48%);
+  --success: hsl(142, 76%, 36%);
+  --warning: hsl(48, 96%, 53%);
+  --chart-1: hsl(199, 89%, 48%);
+  --chart-2: hsl(142, 76%, 36%);
+  --chart-3: hsl(48, 96%, 53%);
+  --chart-4: hsl(280, 65%, 60%);
+  --chart-5: hsl(12, 76%, 61%);
+  --sidebar: hsl(220, 25%, 12%);
+  --sidebar-foreground: hsl(220, 15%, 88%);
+  --sidebar-primary: hsl(199, 89%, 48%);
+  --sidebar-primary-foreground: hsl(220, 15%, 95%);
+  --sidebar-accent: hsl(220, 20%, 18%);
+  --sidebar-accent-foreground: hsl(220, 15%, 82%);
+  --sidebar-border: hsl(220, 20%, 20%);
+  --sidebar-ring: hsl(199, 89%, 48%);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --radius: 8px;
+  --shadow-2xs: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00), 0px 1px 2px -1px hsl(199, 89%, 48%, 0.00);
+  --shadow: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00), 0px 1px 2px -1px hsl(199, 89%, 48%, 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00), 0px 2px 4px -1px hsl(199, 89%, 48%, 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00), 0px 4px 6px -1px hsl(199, 89%, 48%, 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00), 0px 8px 10px -1px hsl(199, 89%, 48%, 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(199, 89%, 48%, 0.00);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+.dark {
+  --background: hsl(220, 27%, 8%);
+  --foreground: hsl(220, 15%, 90%);
+  --card: hsl(220, 25%, 12%);
+  --card-foreground: hsl(220, 15%, 88%);
+  --popover: hsl(220, 25%, 12%);
+  --popover-foreground: hsl(220, 15%, 88%);
+  --primary: hsl(199, 89%, 48%);
+  --primary-foreground: hsl(220, 15%, 95%);
+  --secondary: hsl(220, 20%, 18%);
+  --secondary-foreground: hsl(220, 15%, 82%);
+  --muted: hsl(220, 20%, 15%);
+  --muted-foreground: hsl(220, 10%, 55%);
+  --accent: hsl(220, 20%, 18%);
+  --accent-foreground: hsl(220, 15%, 82%);
+  --destructive: hsl(0, 72%, 51%);
+  --destructive-foreground: hsl(220, 15%, 95%);
+  --border: hsl(220, 20%, 20%);
+  --input: hsl(220, 20%, 18%);
+  --ring: hsl(199, 89%, 48%);
+  --success: hsl(142, 76%, 36%);
+  --warning: hsl(48, 96%, 53%);
+  --chart-1: hsl(199, 89%, 48%);
+  --chart-2: hsl(142, 76%, 36%);
+  --chart-3: hsl(48, 96%, 53%);
+  --chart-4: hsl(280, 65%, 60%);
+  --chart-5: hsl(12, 76%, 61%);
+  --sidebar: hsl(220, 25%, 12%);
+  --sidebar-foreground: hsl(220, 15%, 88%);
+  --sidebar-primary: hsl(199, 89%, 48%);
+  --sidebar-primary-foreground: hsl(220, 15%, 95%);
+  --sidebar-accent: hsl(220, 20%, 18%);
+  --sidebar-accent-foreground: hsl(220, 15%, 82%);
+  --sidebar-border: hsl(220, 20%, 20%);
+  --sidebar-ring: hsl(199, 89%, 48%);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --radius: 8px;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Price change colors */
+.price-up {
+  color: var(--success);
+}
+
+.price-down {
+  color: var(--destructive);
+}
+
+.price-neutral {
+  color: var(--muted-foreground);
+}
+
+/* Status indicators */
+.status-online {
+  color: var(--success);
+}
+
+.status-offline {
+  color: var(--destructive);
+}
+
+.status-pending {
+  color: var(--warning);
+}
+
+/* Data table improvements */
+.data-table th {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  font-size: 13px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.data-table tr:hover {
+  background-color: var(--muted);
+}
+
+/* Input improvements */
+input, select, textarea {
+  background-color: var(--input);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px hsl(199, 89%, 48%, 0.2);
+}
