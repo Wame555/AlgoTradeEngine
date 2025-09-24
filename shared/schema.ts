@@ -36,7 +36,7 @@ export const tradingPairs = pgTable("trading_pairs", {
 // User settings
 export const userSettings = pgTable("user_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull(),
+  userId: varchar("user_id").notNull().unique(),
   telegramBotToken: text("telegram_bot_token"),
   telegramChatId: text("telegram_chat_id"),
   binanceApiKey: text("binance_api_key"),
