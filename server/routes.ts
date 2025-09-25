@@ -31,7 +31,8 @@ import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
-const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
+const LEGACY_DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
+const DEMO_EMAIL = "demo@local";
 const SESSION_TIMEOUT_MS = 5000;
 const SESSION_TIMEOUT_MESSAGE = `Session initialisation timed out after ${SESSION_TIMEOUT_MS}ms`;
 
@@ -82,22 +83,68 @@ const DEFAULT_USER_SETTINGS = {
 
 async function ensureDemoUserRecord(): Promise<User> {
   return db.transaction(async (tx) => {
-    const [existingDemoById] = await tx.select().from(users).where(eq(users.id, DEMO_USER_ID)).limit(1);
-    const [existingByUsername] = await tx
+    const [existingByEmail] = await tx.select().from(users).where(eq(users.email, DEMO_EMAIL)).limit(1);
+    const [legacyById] = await tx.select().from(users).where(eq(users.id, LEGACY_DEMO_USER_ID)).limit(1);
+    const [legacyByUsername] = await tx
       .select()
       .from(users)
       .where(eq(users.username, DEFAULT_SESSION_USERNAME))
       .limit(1);
 
-    if (existingByUsername && existingByUsername.id !== DEMO_USER_ID) {
-      const legacyId = existingByUsername.id;
+    if (!existingByEmail && (legacyByUsername || legacyById)) {
+      const source = legacyByUsername ?? legacyById;
+      if (source) {
+        await tx
+          .update(users)
+          .set({
+            email: DEMO_EMAIL,
+            username: DEFAULT_SESSION_USERNAME,
+            password: DEFAULT_SESSION_PASSWORD,
+          })
+          .where(eq(users.id, source.id));
+      }
+    }
 
-      const [existingDemoSettings] = await tx
-        .select({ id: userSettings.id })
-        .from(userSettings)
-        .where(eq(userSettings.userId, DEMO_USER_ID))
-        .limit(1);
+    const [upserted] = await tx
+      .insert(users)
+      .values({
+        email: DEMO_EMAIL,
+        username: DEFAULT_SESSION_USERNAME,
+        password: DEFAULT_SESSION_PASSWORD,
+      })
+      .onConflictDoUpdate({
+        target: users.email,
+        set: {
+          username: DEFAULT_SESSION_USERNAME,
+          password: DEFAULT_SESSION_PASSWORD,
+        },
+      })
+      .returning();
 
+    const demoUser = upserted ?? existingByEmail ?? legacyByUsername ?? legacyById;
+
+    if (!demoUser) {
+      throw new Error("Failed to resolve demo user account");
+    }
+
+    await tx
+      .update(users)
+      .set({
+        email: DEMO_EMAIL,
+        username: DEFAULT_SESSION_USERNAME,
+        password: DEFAULT_SESSION_PASSWORD,
+      })
+      .where(eq(users.id, demoUser.id));
+
+    const legacyIds = new Set<string>();
+    if (legacyByUsername && legacyByUsername.id !== demoUser.id) {
+      legacyIds.add(legacyByUsername.id);
+    }
+    if (legacyById && legacyById.id !== demoUser.id) {
+      legacyIds.add(legacyById.id);
+    }
+
+    for (const legacyId of Array.from(legacyIds)) {
       const [legacySettings] = await tx
         .select({ id: userSettings.id })
         .from(userSettings)
@@ -105,53 +152,33 @@ async function ensureDemoUserRecord(): Promise<User> {
         .limit(1);
 
       if (legacySettings) {
-        if (existingDemoSettings) {
+        const [demoSettings] = await tx
+          .select({ id: userSettings.id })
+          .from(userSettings)
+          .where(eq(userSettings.userId, demoUser.id))
+          .limit(1);
+
+        if (demoSettings) {
           await tx.delete(userSettings).where(eq(userSettings.userId, legacyId));
         } else {
-          await tx.update(userSettings).set({ userId: DEMO_USER_ID }).where(eq(userSettings.userId, legacyId));
+          await tx.update(userSettings).set({ userId: demoUser.id }).where(eq(userSettings.userId, legacyId));
         }
       }
 
-      await tx.update(indicatorConfigs).set({ userId: DEMO_USER_ID }).where(eq(indicatorConfigs.userId, legacyId));
-      await tx.update(positions).set({ userId: DEMO_USER_ID }).where(eq(positions.userId, legacyId));
-      await tx.update(closedPositions).set({ userId: DEMO_USER_ID }).where(eq(closedPositions.userId, legacyId));
+      await tx.update(indicatorConfigs).set({ userId: demoUser.id }).where(eq(indicatorConfigs.userId, legacyId));
+      await tx.update(positions).set({ userId: demoUser.id }).where(eq(positions.userId, legacyId));
+      await tx.update(closedPositions).set({ userId: demoUser.id }).where(eq(closedPositions.userId, legacyId));
 
-      if (existingDemoById) {
-        await tx.delete(users).where(eq(users.id, legacyId));
-      } else {
-        await tx
-          .update(users)
-          .set({
-            id: DEMO_USER_ID,
-            username: DEFAULT_SESSION_USERNAME,
-            password: DEFAULT_SESSION_PASSWORD,
-          })
-          .where(eq(users.id, legacyId));
-      }
+      await tx.delete(users).where(eq(users.id, legacyId));
     }
 
-    await tx
-      .insert(users)
-      .values({
-        id: DEMO_USER_ID,
-        username: DEFAULT_SESSION_USERNAME,
-        password: DEFAULT_SESSION_PASSWORD,
-      })
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          username: DEFAULT_SESSION_USERNAME,
-          password: DEFAULT_SESSION_PASSWORD,
-        },
-      });
+    const [resolved] = await tx.select().from(users).where(eq(users.id, demoUser.id)).limit(1);
 
-    const [user] = await tx.select().from(users).where(eq(users.id, DEMO_USER_ID)).limit(1);
-
-    if (!user) {
+    if (!resolved) {
       throw new Error("Failed to resolve demo user account");
     }
 
-    return user;
+    return resolved;
   });
 }
 
@@ -545,13 +572,13 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       return res.json({
         userId: user.id,
-        demo: user.id === DEMO_USER_ID,
+        demo: (user.email ?? "").toLowerCase() === DEMO_EMAIL,
         settings,
         serverTime: new Date().toISOString(),
       });
     } catch (error) {
       const fallback = {
-        userId: DEMO_USER_ID,
+        userId: LEGACY_DEMO_USER_ID,
         demo: true,
         settings: null,
         serverTime: new Date().toISOString(),

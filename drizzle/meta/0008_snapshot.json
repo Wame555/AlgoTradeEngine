@@ -1,6 +1,6 @@
 {
-  "id": "cfecd73c-ec0d-4201-831e-6a17f9b77496",
-  "prevId": "e08d01b1-823a-4f4f-808e-b30fe98b25da",
+  "id": "31e86130-1dfc-472a-bd90-21c2104369e7",
+  "prevId": "0929c68a-52db-4f31-863a-758cf0c5697e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -161,7 +161,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "idx_indicator_configs_user_name": {
+          "name": "idx_indicator_configs_user_name",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -644,23 +666,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "user_settings_user_id_unique": {
-          "name": "user_settings_user_id_unique",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "user_settings_user_id_users_id_fk": {
           "name": "user_settings_user_id_users_id_fk",
@@ -677,7 +683,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "user_settings_user_id_uniq": {
+          "name": "user_settings_user_id_uniq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
