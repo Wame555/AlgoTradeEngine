@@ -21,6 +21,7 @@ import { db, pool } from "./db";
 import { ensureSchema } from "./db/guards";
 import { runFuturesBackfill, BackfillTimeframes } from "./services/backfill";
 import { startLiveFuturesStream } from "./services/live";
+import { DEFAULT_TIMEFRAMES, initializeMetrics } from "./services/metrics";
 import { primePrevCloseCaches } from "./state/marketCache";
 
 const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
@@ -129,10 +130,11 @@ wss.on("connection", (ws) => {
             .filter((symbol) => symbol.length > 0);
     };
 
+    const futuresSymbols = parseSymbolsFromEnv();
+    initializeMetrics(futuresSymbols, DEFAULT_TIMEFRAMES);
+
     const futuresEnabled = (process.env.FUTURES ?? "false").toLowerCase() === "true";
     if (futuresEnabled) {
-        const futuresSymbols = parseSymbolsFromEnv();
-
         if (futuresSymbols.length === 0) {
             console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
         } else {

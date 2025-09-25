@@ -1,4 +1,4 @@
-import { getLastClosedCandle, getLastClosedCandlesForTimeframe } from "../db/marketData";
+import { getLastClosedCandlesForTimeframe } from "../db/marketData";
 
 const lastPrice = new Map<string, number>();
 const prevClose = new Map<string, Map<string, number>>();
@@ -29,48 +29,21 @@ export function getLastPrice(symbol: string): number | undefined {
 }
 
 export function setPrevClose(symbol: string, timeframe: string, close: number): void {
+  const key = normalizeSymbol(symbol);
   if (!Number.isFinite(close)) {
     return;
   }
-  const bucket = ensurePrevCloseBucket(symbol);
+  const bucket = ensurePrevCloseBucket(key);
   bucket.set(timeframe, close);
 }
 
-export async function getPrevClose(symbol: string, timeframe: string): Promise<number> {
-  const bucket = ensurePrevCloseBucket(symbol);
-  if (bucket.has(timeframe)) {
-    const cached = bucket.get(timeframe);
-    return typeof cached === "number" ? cached : 0;
+export function getPrevCloseFromCache(symbol: string, timeframe: string): number | undefined {
+  const bucket = prevClose.get(normalizeSymbol(symbol));
+  if (!bucket) {
+    return undefined;
   }
-
-  const record = await getLastClosedCandle(normalizeSymbol(symbol), timeframe);
-  if (!record) {
-    bucket.set(timeframe, 0);
-    return 0;
-  }
-
-  const close = Number(record.close);
-  if (!Number.isFinite(close)) {
-    bucket.set(timeframe, 0);
-    return 0;
-  }
-
-  bucket.set(timeframe, close);
-  return close;
-}
-
-export async function getChangePct(symbol: string, timeframe: string): Promise<number> {
-  const current = getLastPrice(symbol);
-  if (typeof current !== "number" || Number.isNaN(current)) {
-    return 0;
-  }
-
-  const previous = await getPrevClose(symbol, timeframe);
-  if (!Number.isFinite(previous) || previous <= 0) {
-    return 0;
-  }
-
-  return ((current - previous) / previous) * 100;
+  const value = bucket.get(timeframe);
+  return typeof value === "number" ? value : undefined;
 }
 
 export async function primePrevCloseCaches(
