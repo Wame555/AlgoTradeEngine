@@ -76,9 +76,6 @@ END $$;
 
 DROP INDEX IF EXISTS public.indicator_configs_name_unique;
 
-CREATE UNIQUE INDEX IF NOT EXISTS public.idx_indicator_configs_user_name
-  ON public."indicator_configs"("user_id", "name");
-
 -- Restructure closed_positions to new schema
 ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "user_id" varchar;
 ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "size" numeric(18, 8);
@@ -240,14 +237,16 @@ ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "fee";
 
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexname = 'idx_closed_positions_symbol_time'
-      AND indexdef NOT LIKE '%("time")%'
-  ) THEN
-    EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time';
+  IF to_regclass('public.idx_closed_positions_symbol_time') IS NOT NULL THEN
+    EXECUTE 'DROP INDEX public.idx_closed_positions_symbol_time';
+  END IF;
+
+  IF to_regclass('public.idx_closed_positions_user') IS NOT NULL THEN
+    EXECUTE 'DROP INDEX public.idx_closed_positions_user';
+  END IF;
+
+  IF to_regclass('public.idx_indicator_configs_user_name') IS NOT NULL THEN
+    EXECUTE 'DROP INDEX public.idx_indicator_configs_user_name';
   END IF;
 
   IF EXISTS (
@@ -256,20 +255,36 @@ BEGIN
     WHERE table_schema = 'public'
       AND table_name = 'closed_positions'
       AND column_name = 'time'
-  ) THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
+  ) AND to_regclass('public.idx_closed_positions_symbol_time') IS NULL THEN
+    EXECUTE 'CREATE INDEX public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
   END IF;
-END$$;
 
-DO $$
-BEGIN
   IF EXISTS (
     SELECT 1
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'closed_positions'
       AND column_name = 'user_id'
-  ) THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user ON public."closed_positions"("user_id")';
+  ) AND to_regclass('public.idx_closed_positions_user') IS NULL THEN
+    EXECUTE 'CREATE INDEX public.idx_closed_positions_user ON public."closed_positions"("user_id")';
   END IF;
-END$$;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'indicator_configs'
+      AND column_name = 'user_id'
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'indicator_configs'
+      AND column_name = 'name'
+  )
+  AND to_regclass('public.idx_indicator_configs_user_name') IS NULL THEN
+    EXECUTE 'CREATE UNIQUE INDEX public.idx_indicator_configs_user_name ON public."indicator_configs"("user_id", "name")';
+  END IF;
+END
+$$;
