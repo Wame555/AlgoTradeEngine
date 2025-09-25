@@ -19,12 +19,20 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // User table
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: varchar("email", { length: 255 }),
+    username: text("username").notNull(),
+    password: text("password").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    emailUnique: unique("users_email_uniq").on(table.email),
+    usernameUnique: unique("users_username_unique").on(table.username),
+  }),
+);
 
 // Trading pairs
 export const tradingPairs = pgTable("trading_pairs", {
@@ -171,6 +179,7 @@ export const marketData = pgTable("market_data", {
 
 // Create insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
+  email: true,
   username: true,
   password: true,
 });

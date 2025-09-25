@@ -2,7 +2,8 @@ import type { Client, Pool, PoolClient } from "pg";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
-const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
+const LEGACY_DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
+const DEMO_EMAIL = "demo@local";
 
 type ColumnMetadata = {
   dataType: string;
@@ -406,6 +407,7 @@ async function ensureUsersTable(client: PgClient): Promise<void> {
   await ensureColumnDefault(client, "users", "id", "gen_random_uuid()");
   await ensureNotNull(client, "users", "id");
 
+  await ensureColumn(client, "users", "email", "varchar(255)");
   await ensureColumn(client, "users", "username", "text");
   await ensureNotNull(client, "users", "username");
   await ensureColumn(client, "users", "password", "text");
@@ -413,6 +415,11 @@ async function ensureUsersTable(client: PgClient): Promise<void> {
   await ensureColumn(client, "users", "created_at", "timestamptz DEFAULT now()");
   await ensureColumnDefault(client, "users", "created_at", "now()");
 
+  await ensureUniqueConstraint(client, {
+    table: "users",
+    name: "users_email_uniq",
+    columns: ["email"],
+  });
   await ensureUniqueConstraint(client, {
     table: "users",
     name: "users_username_unique",
@@ -634,84 +641,109 @@ async function ensureDemoUser(client: PgClient): Promise<void> {
     return;
   }
 
-  const demoById = await client.query<{ id: string }>(
-    `SELECT id::text AS id FROM public.users WHERE id = $1::uuid LIMIT 1;`,
-    [DEMO_USER_ID],
+  const demoByEmail = await client.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.users WHERE email = $1 LIMIT 1;`,
+    [DEMO_EMAIL],
   );
-  const demoUser = demoById.rows[0]?.id ?? null;
+  const demoEmailId = demoByEmail.rows[0]?.id ?? null;
+
+  const legacyById = await client.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.users WHERE id = $1::uuid LIMIT 1;`,
+    [LEGACY_DEMO_USER_ID],
+  );
+  const legacyId = legacyById.rows[0]?.id ?? null;
 
   const legacyByUsername = await client.query<{ id: string }>(
     `SELECT id::text AS id FROM public.users WHERE username = $1 LIMIT 1;`,
     [DEFAULT_SESSION_USERNAME],
   );
-  const legacyId = legacyByUsername.rows[0]?.id ?? null;
+  const legacyUsernameId = legacyByUsername.rows[0]?.id ?? null;
 
-  if (legacyId && legacyId !== DEMO_USER_ID) {
-    if (await tableExists(client, "user_settings")) {
-      const legacySettings = await client.query<{ exists: boolean }>(
-        `SELECT EXISTS(SELECT 1 FROM public.user_settings WHERE user_id = $1::uuid) AS exists;`,
-        [legacyId],
-      );
-      const demoSettings = await client.query<{ exists: boolean }>(
-        `SELECT EXISTS(SELECT 1 FROM public.user_settings WHERE user_id = $1::uuid) AS exists;`,
-        [DEMO_USER_ID],
-      );
+  const candidateForEmail = demoEmailId ?? legacyUsernameId ?? legacyId ?? null;
+  if (!demoEmailId && candidateForEmail) {
+    await client.query(
+      `UPDATE public.users SET email = $1, username = $2, password = $3 WHERE id = $4::uuid;`,
+      [DEMO_EMAIL, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD, candidateForEmail],
+    );
+  }
 
-      if (legacySettings.rows[0]?.exists) {
-        if (demoSettings.rows[0]?.exists) {
-          await client.query(`DELETE FROM public.user_settings WHERE user_id = $1::uuid;`, [legacyId]);
-        } else {
-          await client.query(
-            `UPDATE public.user_settings SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
-            [DEMO_USER_ID, legacyId],
-          );
-        }
-      }
-    }
+  const upsertResult = await client.query<{ id: string }>(
+    `
+      INSERT INTO public.users (email, username, password)
+      VALUES ($1, $2, $3)
+      ON CONFLICT ON CONSTRAINT users_email_uniq DO UPDATE
+      SET
+        username = EXCLUDED.username,
+        password = EXCLUDED.password
+      RETURNING id::text AS id;
+    `,
+    [DEMO_EMAIL, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD],
+  );
 
-    if (await tableExists(client, "indicator_configs")) {
-      await client.query(
-        `UPDATE public.indicator_configs SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
-        [DEMO_USER_ID, legacyId],
-      );
-    }
+  const demoUserId =
+    upsertResult.rows[0]?.id ??
+    demoEmailId ??
+    legacyUsernameId ??
+    legacyId ??
+    null;
 
-    if (await tableExists(client, "positions")) {
-      await client.query(
-        `UPDATE public.positions SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
-        [DEMO_USER_ID, legacyId],
-      );
-    }
-
-    if (await tableExists(client, "closed_positions")) {
-      await client.query(
-        `UPDATE public.closed_positions SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
-        [DEMO_USER_ID, legacyId],
-      );
-    }
-
-    if (demoUser) {
-      await client.query(`DELETE FROM public.users WHERE id = $1::uuid;`, [legacyId]);
-    } else {
-      await client.query(
-        `UPDATE public.users SET id = $1::uuid, username = $2, password = $3 WHERE id = $4::uuid;`,
-        [DEMO_USER_ID, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD, legacyId],
-      );
-    }
+  if (!demoUserId) {
+    throw new Error("[ensureDemoUser] failed to resolve demo user identifier");
   }
 
   await client.query(
-    `
-      INSERT INTO public.users (id, username, password)
-      VALUES ($1::uuid, $2, $3)
-      ON CONFLICT (id) DO UPDATE SET
-        username = EXCLUDED.username,
-        password = EXCLUDED.password;
-    `,
-    [DEMO_USER_ID, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD],
+    `UPDATE public.users SET email = $1, username = $2, password = $3 WHERE id = $4::uuid;`,
+    [DEMO_EMAIL, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD, demoUserId],
   );
 
-  if (await tableExists(client, "user_settings")) {
+  const legacyCandidates = new Set<string>();
+  for (const candidate of [legacyId, legacyUsernameId]) {
+    if (candidate && candidate !== demoUserId) {
+      legacyCandidates.add(candidate);
+    }
+  }
+
+  const hasUserSettings = await tableExists(client, "user_settings");
+  const hasIndicatorConfigs = await tableExists(client, "indicator_configs");
+  const hasPositions = await tableExists(client, "positions");
+  const hasClosedPositions = await tableExists(client, "closed_positions");
+
+  for (const legacy of Array.from(legacyCandidates)) {
+    if (hasUserSettings) {
+      await client.query(
+        `UPDATE public.user_settings SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
+        [demoUserId, legacy],
+      );
+    }
+
+    if (hasIndicatorConfigs) {
+      await client.query(
+        `UPDATE public.indicator_configs SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
+        [demoUserId, legacy],
+      );
+    }
+
+    if (hasPositions) {
+      await client.query(
+        `UPDATE public.positions SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
+        [demoUserId, legacy],
+      );
+    }
+
+    if (hasClosedPositions) {
+      await client.query(
+        `UPDATE public.closed_positions SET user_id = $1::uuid WHERE user_id = $2::uuid;`,
+        [demoUserId, legacy],
+      );
+    }
+
+    await client.query(
+      `DELETE FROM public.users WHERE id = $1::uuid AND id <> $2::uuid;`,
+      [legacy, demoUserId],
+    );
+  }
+
+  if (hasUserSettings) {
     await client.query(
       `
         INSERT INTO public.user_settings (
@@ -724,15 +756,22 @@ async function ensureDemoUser(client: PgClient): Promise<void> {
           default_tp_pct,
           default_sl_pct
         )
-        VALUES (gen_random_uuid(), $1::uuid, true, 1, 2, true, '1.00', '0.50')
-        ON CONFLICT ON CONSTRAINT user_settings_user_id_uniq DO NOTHING;
+        VALUES (gen_random_uuid(), $1::uuid, true, 1, 2, true, 1.00, 0.50)
+        ON CONFLICT ON CONSTRAINT user_settings_user_id_uniq DO UPDATE
+        SET
+          demo_enabled = EXCLUDED.demo_enabled,
+          default_tp_pct = COALESCE(EXCLUDED.default_tp_pct, user_settings.default_tp_pct),
+          default_sl_pct = COALESCE(EXCLUDED.default_sl_pct, user_settings.default_sl_pct),
+          is_testnet = COALESCE(EXCLUDED.is_testnet, user_settings.is_testnet),
+          default_leverage = COALESCE(EXCLUDED.default_leverage, user_settings.default_leverage),
+          risk_percent = COALESCE(EXCLUDED.risk_percent, user_settings.risk_percent);
       `,
-      [DEMO_USER_ID],
+      [demoUserId],
     );
 
     await client.query(
       `UPDATE public.user_settings SET updated_at = COALESCE(updated_at, now()) WHERE user_id = $1::uuid;`,
-      [DEMO_USER_ID],
+      [demoUserId],
     );
   }
 }

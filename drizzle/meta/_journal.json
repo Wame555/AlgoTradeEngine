@@ -56,6 +56,20 @@
       "when": 1758776879876,
       "tag": "0007_known_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1758812604867,
+      "tag": "0008_certain_clea",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1758813485272,
+      "tag": "0009_fix_user_settings_user_id_uuid",
+      "breakpoints": true
     }
   ]
 }
