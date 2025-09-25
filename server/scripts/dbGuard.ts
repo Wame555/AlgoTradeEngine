@@ -4,14 +4,49 @@ const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
 const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
 
-type IndexSpec = {
+export type IndexSpec = {
   name: string;
   table: string;
   columns: string[];
   unique?: boolean;
 };
 
-type ConstraintType = "p" | "u" | "f" | "c" | "x" | "t" | "e";
+type ConstraintKind = "PRIMARY KEY" | "UNIQUE";
+
+type ConstraintInfo = {
+  name: string;
+  columns: string[];
+  type: ConstraintKind;
+};
+
+type ConstraintTypeLetter = "p" | "u" | "f" | "c" | "x" | "t" | "e";
+
+type ColumnMetadata = {
+  dataType: string;
+  isNullable: boolean;
+  columnDefault: string | null;
+};
+
+type IndexMetadata = {
+  tableName: string;
+  columns: string[];
+  isUnique: boolean;
+  predicate: string | null;
+};
+
+type SchemaInspector = {
+  tableExists: (tableName: string) => Promise<boolean>;
+  getColumns: (tableName: string) => Promise<Map<string, ColumnMetadata>>;
+  invalidateTable: (tableName: string) => void;
+  getIndexMetadata: (indexName: string) => Promise<IndexMetadata | null>;
+  invalidateIndex: (indexName: string) => void;
+  clear: () => void;
+};
+
+type GuardContext = {
+  client: Client | PoolClient;
+  schema: SchemaInspector;
+};
 
 function isPool(db: Pool | Client): db is Pool {
   return typeof (db as Pool).connect === "function" && typeof (db as Pool).end === "function";
@@ -21,108 +56,422 @@ function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
 
-async function tableExists(client: Client | PoolClient, tableName: string): Promise<boolean> {
-  const result = await client.query<{ exists: boolean }>(
-    `SELECT to_regclass($1) IS NOT NULL AS exists;`,
-    [`public.${tableName}`],
-  );
-  return Boolean(result.rows[0]?.exists);
+function normalizeName(value: string): string {
+  return value.toLowerCase();
 }
 
-type IndexMetadata = {
-  tableName: string;
-  columns: string[];
-  isUnique: boolean;
-  predicate: string | null;
-};
+function columnsMatch(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((column, index) => normalizeName(column) === normalizeName(right[index] ?? ""));
+}
 
-async function getIndexMetadata(
-  client: Client | PoolClient,
-  indexName: string,
-): Promise<IndexMetadata | null> {
-  const result = await client.query<{
-    table_name: string;
-    is_unique: boolean;
-    predicate: string | null;
-    column_name: string;
-    ordinality: number;
-  }>(
-    `
-      SELECT
-        t.relname AS table_name,
-        ix.indisunique AS is_unique,
-        pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-        a.attname AS column_name,
-        k.ordinality
-      FROM pg_class i
-      JOIN pg_namespace n ON n.oid = i.relnamespace
-      JOIN pg_index ix ON ix.indexrelid = i.oid
-      JOIN pg_class t ON t.oid = ix.indrelid
-      JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
-      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-      WHERE n.nspname = 'public'
-        AND i.relname = $1
-      ORDER BY k.ordinality;
-    `,
-    [indexName],
-  );
-
-  if (result.rowCount === 0) {
+function normalizeDefault(value: string | null): string | null {
+  if (!value) {
     return null;
   }
-
-  const columns = result.rows
-    .sort((left, right) => left.ordinality - right.ordinality)
-    .map((row) => row.column_name)
-    .filter((column) => column.length > 0);
-
-  const { table_name: tableName, is_unique: isUnique, predicate } = result.rows[0]!;
-  return { tableName, columns, isUnique, predicate };
+  return value
+    .replace(/::[a-z_\s]+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
-async function getConstraintForIndex(client: Client | PoolClient, indexName: string): Promise<string | null> {
-  const result = await client.query<{ constraint_name: string }>(
+function defaultMatches(value: string | null, expectations: string[]): boolean {
+  const normalized = normalizeDefault(value);
+  if (!normalized) {
+    return false;
+  }
+  return expectations.some((expectation) => normalized.includes(expectation.toLowerCase()));
+}
+function createSchemaInspector(client: Client | PoolClient): SchemaInspector {
+  const tableExistsCache = new Map<string, boolean>();
+  const columnCache = new Map<string, Map<string, ColumnMetadata>>();
+  const indexCache = new Map<string, IndexMetadata | null>();
+
+  const normalizeTableKey = (tableName: string) => normalizeName(tableName);
+  const normalizeIndexKey = (indexName: string) => normalizeName(indexName);
+
+  async function tableExists(tableName: string): Promise<boolean> {
+    const cacheKey = normalizeTableKey(tableName);
+    if (tableExistsCache.has(cacheKey)) {
+      return tableExistsCache.get(cacheKey)!;
+    }
+    const result = await client.query<{ exists: boolean }>(
+      `SELECT to_regclass($1) IS NOT NULL AS exists;`,
+      [`public.${tableName}`],
+    );
+    const exists = Boolean(result.rows[0]?.exists);
+    tableExistsCache.set(cacheKey, exists);
+    return exists;
+  }
+
+  async function getColumns(tableName: string): Promise<Map<string, ColumnMetadata>> {
+    const cacheKey = normalizeTableKey(tableName);
+    if (columnCache.has(cacheKey)) {
+      return columnCache.get(cacheKey)!;
+    }
+
+    if (!(await tableExists(tableName))) {
+      const empty = new Map<string, ColumnMetadata>();
+      columnCache.set(cacheKey, empty);
+      return empty;
+    }
+
+    const result = await client.query<{
+      column_name: string;
+      data_type: string;
+      is_nullable: "YES" | "NO";
+      column_default: string | null;
+    }>(
+      `
+        SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1;
+      `,
+      [tableName],
+    );
+
+    const metadata = new Map<string, ColumnMetadata>();
+    for (const row of result.rows) {
+      metadata.set(row.column_name, {
+        dataType: row.data_type,
+        isNullable: row.is_nullable === "YES",
+        columnDefault: row.column_default ?? null,
+      });
+    }
+
+    columnCache.set(cacheKey, metadata);
+    return metadata;
+  }
+
+  async function getIndexMetadata(indexName: string): Promise<IndexMetadata | null> {
+    const cacheKey = normalizeIndexKey(indexName);
+    if (indexCache.has(cacheKey)) {
+      return indexCache.get(cacheKey)!;
+    }
+
+    const result = await client.query<{
+      table_name: string;
+      is_unique: boolean;
+      predicate: string | null;
+      column_name: string;
+      ordinality: number;
+    }>(
+      `
+        SELECT
+          t.relname AS table_name,
+          ix.indisunique AS is_unique,
+          pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
+          a.attname AS column_name,
+          k.ordinality
+        FROM pg_class i
+        JOIN pg_namespace n ON n.oid = i.relnamespace
+        JOIN pg_index ix ON ix.indexrelid = i.oid
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+        WHERE n.nspname = 'public'
+          AND i.relname = $1
+        ORDER BY k.ordinality;
+      `,
+      [indexName],
+    );
+
+    if (result.rowCount === 0) {
+      indexCache.set(cacheKey, null);
+      return null;
+    }
+
+    const columns = result.rows
+      .sort((left, right) => left.ordinality - right.ordinality)
+      .map((row) => row.column_name)
+      .filter((column) => column.length > 0);
+    const { table_name: tableName, is_unique: isUnique, predicate } = result.rows[0]!;
+    const metadata: IndexMetadata = { tableName, columns, isUnique, predicate };
+    indexCache.set(cacheKey, metadata);
+    return metadata;
+  }
+
+  function invalidateTable(tableName: string): void {
+    const cacheKey = normalizeTableKey(tableName);
+    tableExistsCache.delete(cacheKey);
+    columnCache.delete(cacheKey);
+    indexCache.forEach((metadata, indexKey) => {
+      if (metadata && normalizeTableKey(metadata.tableName) === cacheKey) {
+        indexCache.delete(indexKey);
+      }
+    });
+  }
+
+  function invalidateIndex(indexName: string): void {
+    indexCache.delete(normalizeIndexKey(indexName));
+  }
+
+  function clear(): void {
+    tableExistsCache.clear();
+    columnCache.clear();
+    indexCache.clear();
+  }
+
+  return { tableExists, getColumns, invalidateTable, getIndexMetadata, invalidateIndex, clear };
+}
+async function getConstraints(
+  context: GuardContext,
+  tableName: string,
+  type: ConstraintKind,
+): Promise<ConstraintInfo[]> {
+  const { client } = context;
+  const result = await client.query<{
+    constraint_name: string;
+    column_name: string | null;
+    ordinal_position: number | null;
+  }>(
+    `
+      SELECT tc.constraint_name, kcu.column_name, kcu.ordinal_position
+      FROM information_schema.table_constraints tc
+      LEFT JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.table_name = kcu.table_name
+      WHERE tc.table_schema = 'public'
+        AND tc.table_name = $1
+        AND tc.constraint_type = $2
+      ORDER BY tc.constraint_name, kcu.ordinal_position;
+    `,
+    [tableName, type],
+  );
+
+  const grouped = new Map<string, { type: ConstraintKind; columns: { name: string; ordinal: number }[] }>();
+  for (const row of result.rows) {
+    const entry = grouped.get(row.constraint_name) ?? {
+      type,
+      columns: [],
+    };
+    if (row.column_name) {
+      entry.columns.push({ name: row.column_name, ordinal: row.ordinal_position ?? Number.MAX_SAFE_INTEGER });
+    }
+    grouped.set(row.constraint_name, entry);
+  }
+
+  return Array.from(grouped.entries()).map(([name, details]) => ({
+    name,
+    type: details.type,
+    columns: details.columns
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((column) => column.name),
+  }));
+}
+
+async function dropConstraint(context: GuardContext, tableName: string, constraintName: string): Promise<void> {
+  await context.client.query(
+    `ALTER TABLE public.${quoteIdentifier(tableName)} DROP CONSTRAINT ${quoteIdentifier(constraintName)};`,
+  );
+  context.schema.invalidateTable(tableName);
+  context.schema.invalidateIndex(constraintName);
+}
+
+async function renameConstraint(
+  context: GuardContext,
+  tableName: string,
+  currentName: string,
+  desiredName: string,
+): Promise<void> {
+  if (currentName === desiredName) {
+    return;
+  }
+  await context.client.query(
+    `ALTER TABLE public.${quoteIdentifier(tableName)} RENAME CONSTRAINT ${quoteIdentifier(currentName)} TO ${quoteIdentifier(
+      desiredName,
+    )};`,
+  );
+  context.schema.invalidateIndex(currentName);
+  context.schema.invalidateIndex(desiredName);
+}
+
+async function tableExists(context: GuardContext, tableName: string): Promise<boolean> {
+  return context.schema.tableExists(tableName);
+}
+
+async function columnExists(context: GuardContext, tableName: string, columnName: string): Promise<boolean> {
+  const columns = await context.schema.getColumns(tableName);
+  return columns.has(columnName);
+}
+
+async function ensureColumnExists(
+  context: GuardContext,
+  tableName: string,
+  columnName: string,
+  definitionSql: string,
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
+  const columns = await context.schema.getColumns(tableName);
+  if (!columns.has(columnName)) {
+    await context.client.query(
+      `ALTER TABLE public.${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${definitionSql};`,
+    );
+    context.schema.invalidateTable(tableName);
+  }
+}
+
+async function ensureColumnType(
+  context: GuardContext,
+  tableName: string,
+  columnName: string,
+  expectedType: string,
+  usingExpression?: string,
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
+  const columns = await context.schema.getColumns(tableName);
+  const column = columns.get(columnName);
+  if (!column) {
+    return;
+  }
+  if (normalizeName(column.dataType) !== normalizeName(expectedType)) {
+    const using = usingExpression ?? `${quoteIdentifier(columnName)}::${expectedType}`;
+    await context.client.query(
+      `ALTER TABLE public.${quoteIdentifier(tableName)} ALTER COLUMN ${quoteIdentifier(columnName)} TYPE ${expectedType} USING ${using};`,
+    );
+    context.schema.invalidateTable(tableName);
+  }
+}
+
+async function ensureColumnDefault(
+  context: GuardContext,
+  tableName: string,
+  columnName: string,
+  defaultSql: string,
+  matchers: string[] = [defaultSql],
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
+  const columns = await context.schema.getColumns(tableName);
+  const column = columns.get(columnName);
+  if (!column) {
+    return;
+  }
+  if (!defaultMatches(column.columnDefault, matchers)) {
+    await context.client.query(
+      `ALTER TABLE public.${quoteIdentifier(tableName)} ALTER COLUMN ${quoteIdentifier(columnName)} SET DEFAULT ${defaultSql};`,
+    );
+    context.schema.invalidateTable(tableName);
+  }
+}
+
+async function ensureColumnNotNull(
+  context: GuardContext,
+  tableName: string,
+  columnName: string,
+  options: { skipIfNullsExist?: boolean } = {},
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
+
+  const columns = await context.schema.getColumns(tableName);
+  const column = columns.get(columnName);
+  if (!column || !column.isNullable) {
+    return;
+  }
+
+  if (options.skipIfNullsExist) {
+    const result = await context.client.query<{ has_nulls: boolean }>(
+      `
+        SELECT EXISTS(
+          SELECT 1
+          FROM public.${quoteIdentifier(tableName)}
+          WHERE ${quoteIdentifier(columnName)} IS NULL
+        ) AS has_nulls;
+      `,
+    );
+    if (result.rows[0]?.has_nulls) {
+      console.warn(
+        `[userSettingsGuard] skipping NOT NULL enforcement for public.${tableName}.${columnName} because NULL values exist.`,
+      );
+      return;
+    }
+  }
+
+  await context.client.query(
+    `ALTER TABLE public.${quoteIdentifier(tableName)} ALTER COLUMN ${quoteIdentifier(columnName)} SET NOT NULL;`,
+  );
+  context.schema.invalidateTable(tableName);
+}
+
+async function ensurePrimaryKey(
+  context: GuardContext,
+  tableName: string,
+  constraintName: string,
+  columns: string[],
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
+  const constraints = await getConstraints(context, tableName, "PRIMARY KEY");
+  const canonical = constraints.find((constraint) => columnsMatch(constraint.columns, columns));
+
+  for (const constraint of constraints) {
+    if (!columnsMatch(constraint.columns, columns)) {
+      await dropConstraint(context, tableName, constraint.name);
+    }
+  }
+
+  if (!canonical) {
+    await context.client.query(
+      `ALTER TABLE public.${quoteIdentifier(tableName)} ADD CONSTRAINT ${quoteIdentifier(constraintName)} PRIMARY KEY (${columns
+        .map(quoteIdentifier)
+        .join(", ")});`,
+    );
+    context.schema.invalidateTable(tableName);
+  } else if (canonical.name !== constraintName) {
+    await renameConstraint(context, tableName, canonical.name, constraintName);
+  }
+}
+async function getConstraintName(
+  context: GuardContext,
+  tableName: string,
+  constraintName: string,
+  type: ConstraintTypeLetter,
+): Promise<string | null> {
+  const result = await context.client.query<{ constraint_name: string }>(
     `
       SELECT c.conname AS constraint_name
       FROM pg_constraint c
-      JOIN pg_class i ON i.oid = c.conindid
-      JOIN pg_namespace n ON n.oid = i.relnamespace
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
       WHERE n.nspname = 'public'
-        AND i.relname = $1
+        AND t.relname = $1
+        AND c.conname = $2
+        AND c.contype = $3
       LIMIT 1;
     `,
-    [indexName],
+    [tableName, constraintName, type],
   );
   return result.rows[0]?.constraint_name ?? null;
 }
 
 async function constraintExists(
-  client: Client | PoolClient,
+  context: GuardContext,
   tableName: string,
   constraintName: string,
-  type: ConstraintType,
+  type: ConstraintTypeLetter,
 ): Promise<boolean> {
-  const result = await client.query<{ exists: boolean }>(
-    `
-      SELECT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = $1
-          AND conrelid = $2::regclass
-          AND contype = $3
-      ) AS exists;
-    `,
-    [constraintName, `public.${tableName}`, type],
-  );
-  return Boolean(result.rows[0]?.exists);
+  return (await getConstraintName(context, tableName, constraintName, type)) != null;
 }
 
 async function findMatchingUniqueIndex(
-  client: Client | PoolClient,
+  context: GuardContext,
   tableName: string,
   columns: string[],
 ): Promise<string | null> {
-  const result = await client.query<{ index_name: string }>(
+  const result = await context.client.query<{ index_name: string }>(
     `
       SELECT i.relname AS index_name
       FROM pg_class t
@@ -144,13 +493,8 @@ async function findMatchingUniqueIndex(
   return result.rows[0]?.index_name ?? null;
 }
 
-function isDuplicateObjectError(error: unknown): boolean {
-  const code = (error as { code?: string })?.code;
-  return code === "42710" || code === "42P07";
-}
-
 async function renameIndexIfNeeded(
-  client: Client | PoolClient,
+  context: GuardContext,
   currentName: string,
   desiredName: string,
 ): Promise<string> {
@@ -158,12 +502,12 @@ async function renameIndexIfNeeded(
     return currentName;
   }
 
-  const currentMetadata = await getIndexMetadata(client, currentName);
+  const currentMetadata = await context.schema.getIndexMetadata(currentName);
   if (!currentMetadata) {
     return currentName;
   }
 
-  const desiredMetadata = await getIndexMetadata(client, desiredName);
+  const desiredMetadata = await context.schema.getIndexMetadata(desiredName);
   if (desiredMetadata) {
     console.warn(
       `[userSettingsGuard] target index public.${desiredName} already exists; skipping rename from public.${currentName}.`,
@@ -172,12 +516,15 @@ async function renameIndexIfNeeded(
   }
 
   try {
-    await client.query(
+    await context.client.query(
       `ALTER INDEX public.${quoteIdentifier(currentName)} RENAME TO ${quoteIdentifier(desiredName)};`,
     );
+    context.schema.invalidateIndex(currentName);
+    context.schema.invalidateIndex(desiredName);
     return desiredName;
   } catch (error) {
-    if (isDuplicateObjectError(error)) {
+    const code = (error as { code?: string }).code;
+    if (code === "42710" || code === "42P07") {
       console.warn(
         `[userSettingsGuard] unable to rename index public.${currentName} to ${desiredName}: ${String(
           (error as Error).message ?? error,
@@ -189,34 +536,32 @@ async function renameIndexIfNeeded(
   }
 }
 
-async function ensureIndex(
-  client: Client | PoolClient,
-  { name, table, columns, unique }: IndexSpec,
-): Promise<void> {
-  if (!(await tableExists(client, table))) {
+async function ensureIndex(context: GuardContext, spec: IndexSpec): Promise<void> {
+  const { name, table, columns, unique } = spec;
+  if (!(await tableExists(context, table))) {
     console.warn(`[userSettingsGuard] table public.${table} missing, unable to ensure index ${name}.`);
     return;
   }
 
-  const metadata = await getIndexMetadata(client, name);
+  const metadata = await context.schema.getIndexMetadata(name);
   const expectedColumns = columns.map((column) => column.toLowerCase());
-  const createSql = `${unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX"} IF NOT EXISTS ${quoteIdentifier(
-    name,
-  )} ON public.${quoteIdentifier(table)}(${columns.map(quoteIdentifier).join(", ")});`;
+  const createSql = `${unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX"} IF NOT EXISTS ${quoteIdentifier(name)} ON public.${quoteIdentifier(
+    table,
+  )}(${columns.map(quoteIdentifier).join(", ")});`;
 
   if (metadata) {
-    const tableMatches = metadata.tableName.toLowerCase() === table.toLowerCase();
+    const tableMatches = normalizeName(metadata.tableName) === normalizeName(table);
     const predicateMatches = metadata.predicate == null;
-    const columnsMatch =
+    const columnsMatchExpected =
       metadata.columns.length === expectedColumns.length &&
       metadata.columns.every((column, index) => column.toLowerCase() === expectedColumns[index]);
     const uniquenessMatches = metadata.isUnique === Boolean(unique);
 
-    if (tableMatches && predicateMatches && columnsMatch && uniquenessMatches) {
+    if (tableMatches && predicateMatches && columnsMatchExpected && uniquenessMatches) {
       return;
     }
 
-    const attachedConstraint = await getConstraintForIndex(client, name);
+    const attachedConstraint = await getConstraintName(context, table, name, "u");
     if (attachedConstraint) {
       console.warn(
         `[userSettingsGuard] index public.${name} is attached to constraint ${attachedConstraint}; expected definition mismatch detected, skipping rebuild.`,
@@ -224,53 +569,65 @@ async function ensureIndex(
       return;
     }
 
-    await client.query(`DROP INDEX IF EXISTS public.${quoteIdentifier(name)};`);
+    await context.client.query(`DROP INDEX IF EXISTS public.${quoteIdentifier(name)};`);
+    context.schema.invalidateIndex(name);
     console.warn(`[userSettingsGuard] rebuilt index public.${name} with canonical definition.`);
   }
 
-  await client.query(createSql);
+  await context.client.query(createSql);
+  context.schema.invalidateIndex(name);
 }
 
-async function columnExists(
-  client: Client | PoolClient,
+async function ensureUuidColumn(
+  context: GuardContext,
   tableName: string,
   columnName: string,
-): Promise<boolean> {
-  const result = await client.query<{ exists: boolean }>(
-    `
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = $1
-          AND column_name = $2
-      ) AS exists;
-    `,
-    [tableName, columnName],
-  );
-  return Boolean(result.rows[0]?.exists);
-}
+  options: { notNull?: boolean; fillWithDemoId?: boolean } = {},
+): Promise<void> {
+  if (!(await tableExists(context, tableName))) {
+    return;
+  }
 
-async function getColumnType(
-  client: Client | PoolClient,
-  tableName: string,
-  columnName: string,
-): Promise<string | null> {
-  const result = await client.query<{ data_type: string | null }>(
-    `
-      SELECT data_type
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = $1
-        AND column_name = $2;
-    `,
-    [tableName, columnName],
-  );
-  return result.rows[0]?.data_type ?? null;
-}
+  let columns = await context.schema.getColumns(tableName);
+  if (!columns.has(columnName)) {
+    await context.client.query(`ALTER TABLE public.${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} uuid`);
+    context.schema.invalidateTable(tableName);
+    columns = await context.schema.getColumns(tableName);
+  }
 
-async function ensureUsersTable(client: Client | PoolClient): Promise<void> {
-  await client.query(`
+  let column = columns.get(columnName);
+  if (!column) {
+    return;
+  }
+
+  if (normalizeName(column.dataType) !== "uuid") {
+    await context.client.query(
+      `ALTER TABLE public.${quoteIdentifier(tableName)} ALTER COLUMN ${quoteIdentifier(columnName)} TYPE uuid USING ${quoteIdentifier(
+        columnName,
+      )}::uuid`,
+    );
+    context.schema.invalidateTable(tableName);
+    column = (await context.schema.getColumns(tableName)).get(columnName);
+    if (!column) {
+      return;
+    }
+  }
+
+  if (options.fillWithDemoId) {
+    await context.client.query(
+      `UPDATE public.${quoteIdentifier(tableName)} SET ${quoteIdentifier(columnName)} = $1::uuid WHERE ${quoteIdentifier(
+        columnName,
+      )} IS NULL`,
+      [DEMO_USER_ID],
+    );
+  }
+
+  if (options.notNull) {
+    await ensureColumnNotNull(context, tableName, columnName);
+  }
+}
+async function ensureUsersTable(context: GuardContext): Promise<void> {
+  await context.client.query(`
     CREATE TABLE IF NOT EXISTS public.users (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       username text NOT NULL UNIQUE,
@@ -278,88 +635,40 @@ async function ensureUsersTable(client: Client | PoolClient): Promise<void> {
       created_at timestamptz DEFAULT now()
     );
   `);
+  context.schema.invalidateTable("users");
 
-  if (!(await columnExists(client, "users", "id"))) {
-    await client.query(`ALTER TABLE public.users ADD COLUMN id uuid`);
+  const hasId = await columnExists(context, "users", "id");
+  if (!hasId) {
+    await context.client.query(`ALTER TABLE public.users ADD COLUMN id uuid`);
+    context.schema.invalidateTable("users");
   }
 
-  const idType = await getColumnType(client, "users", "id");
-  if (idType && idType !== "uuid") {
-    await client.query(`ALTER TABLE public.users ALTER COLUMN id TYPE uuid USING id::uuid`);
-  }
+  await ensureColumnType(context, "users", "id", "uuid");
+  await context.client.query(`UPDATE public.users SET id = gen_random_uuid() WHERE id IS NULL`);
+  await ensureColumnDefault(context, "users", "id", "gen_random_uuid()", ["gen_random_uuid()"]);
+  await ensureColumnNotNull(context, "users", "id");
+  await ensureColumnNotNull(context, "users", "username");
+  await ensureColumnNotNull(context, "users", "password");
+  await ensureColumnDefault(context, "users", "created_at", "now()", ["now()", "current_timestamp"]);
 
-  await client.query(`UPDATE public.users SET id = gen_random_uuid() WHERE id IS NULL`);
-  await client.query(`ALTER TABLE public.users ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
-  await client.query(`ALTER TABLE public.users ALTER COLUMN id SET NOT NULL`);
+  await ensurePrimaryKey(context, "users", "users_pkey", ["id"]);
 
-  await client.query(`ALTER TABLE public.users ALTER COLUMN username SET NOT NULL`);
-  await client.query(`ALTER TABLE public.users ALTER COLUMN password SET NOT NULL`);
-
-  const pkInfo = await client.query<{ constraint_name: string; column_name: string }>(
-    `
-      SELECT tc.constraint_name, kcu.column_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = 'users'
-        AND tc.constraint_type = 'PRIMARY KEY';
-    `,
+  const uniqueConstraints = await getConstraints(context, "users", "UNIQUE");
+  const usernameConstraint = uniqueConstraints.find((constraint) =>
+    columnsMatch(constraint.columns, ["username"]),
   );
 
-  if (pkInfo.rowCount > 0) {
-    const constraintName = pkInfo.rows[0]!.constraint_name;
-    const onlyId = pkInfo.rows.every((row) => row.column_name === "id");
-    if (!onlyId) {
-      await client.query(`ALTER TABLE public.users DROP CONSTRAINT "${constraintName}"`);
-    }
-  }
-
-  const pkCheck = await client.query<{ constraint_name: string }>(
-    `
-      SELECT constraint_name
-      FROM information_schema.table_constraints
-      WHERE table_schema = 'public'
-        AND table_name = 'users'
-        AND constraint_type = 'PRIMARY KEY'
-      LIMIT 1;
-    `,
-  );
-
-  if (pkCheck.rowCount === 0) {
-    await client.query(`ALTER TABLE public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id)`);
-  }
-
-  const uniqueInfo = await client.query<{ constraint_name: string }>(
-    `
-      SELECT tc.constraint_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = 'users'
-        AND tc.constraint_type = 'UNIQUE'
-        AND kcu.column_name = 'username'
-      LIMIT 1;
-    `,
-  );
-
-  if (uniqueInfo.rowCount > 0) {
-    const constraintName = uniqueInfo.rows[0]!.constraint_name;
-    if (constraintName !== "users_username_unique") {
-      await client.query(
-        `ALTER TABLE public.users RENAME CONSTRAINT "${constraintName}" TO users_username_unique`,
-      );
-    }
-  } else {
-    await client.query(`ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE (username)`);
+  if (!usernameConstraint) {
+    await context.client.query(
+      `ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE (username);`,
+    );
+    context.schema.invalidateTable("users");
+  } else if (usernameConstraint.name !== "users_username_unique") {
+    await renameConstraint(context, "users", usernameConstraint.name, "users_username_unique");
   }
 }
-
-async function ensureUserSettingsTable(client: Client | PoolClient): Promise<void> {
-  await client.query(`
+async function ensureUserSettingsTable(context: GuardContext): Promise<void> {
+  await context.client.query(`
     CREATE TABLE IF NOT EXISTS public.user_settings (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL UNIQUE REFERENCES public.users(id) ON DELETE CASCADE,
@@ -377,34 +686,18 @@ async function ensureUserSettingsTable(client: Client | PoolClient): Promise<voi
       updated_at timestamp DEFAULT now()
     );
   `);
+  context.schema.invalidateTable("user_settings");
 
-  if (!(await columnExists(client, "user_settings", "id"))) {
-    await client.query(`ALTER TABLE public.user_settings ADD COLUMN id uuid`);
-  }
+  await ensureUuidColumn(context, "user_settings", "id");
+  await context.client.query(`UPDATE public.user_settings SET id = gen_random_uuid() WHERE id IS NULL`);
+  await ensureColumnDefault(context, "user_settings", "id", "gen_random_uuid()", ["gen_random_uuid()"]);
+  await ensureColumnNotNull(context, "user_settings", "id");
 
-  const idType = await getColumnType(client, "user_settings", "id");
-  if (idType && idType !== "uuid") {
-    await client.query(`ALTER TABLE public.user_settings ALTER COLUMN id TYPE uuid USING id::uuid`);
-  }
+  await ensureUuidColumn(context, "user_settings", "user_id");
+  await context.client.query(`DELETE FROM public.user_settings WHERE user_id IS NULL`);
+  await ensureColumnNotNull(context, "user_settings", "user_id");
 
-  await client.query(`UPDATE public.user_settings SET id = gen_random_uuid() WHERE id IS NULL`);
-  await client.query(`ALTER TABLE public.user_settings ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
-  await client.query(`ALTER TABLE public.user_settings ALTER COLUMN id SET NOT NULL`);
-
-  if (!(await columnExists(client, "user_settings", "user_id"))) {
-    await client.query(`ALTER TABLE public.user_settings ADD COLUMN user_id uuid`);
-  }
-
-  const userIdType = await getColumnType(client, "user_settings", "user_id");
-  if (userIdType && userIdType !== "uuid") {
-    await client.query(
-      `ALTER TABLE public.user_settings ALTER COLUMN user_id TYPE uuid USING user_id::uuid`,
-    );
-  }
-
-  await client.query(`DELETE FROM public.user_settings WHERE user_id IS NULL`);
-
-  await client.query(`
+  await context.client.query(`
     WITH ranked AS (
       SELECT id,
              row_number() OVER (
@@ -420,162 +713,54 @@ async function ensureUserSettingsTable(client: Client | PoolClient): Promise<voi
     WHERE us.id = r.id AND r.rn > 1;
   `);
 
-  await client.query(`ALTER TABLE public.user_settings ALTER COLUMN user_id SET NOT NULL`);
-  await client.query(`UPDATE public.user_settings SET created_at = COALESCE(created_at, now())`);
-  await client.query(`UPDATE public.user_settings SET updated_at = COALESCE(updated_at, now())`);
-  await client.query(`ALTER TABLE public.user_settings ALTER COLUMN created_at SET DEFAULT now()`);
-  await client.query(`ALTER TABLE public.user_settings ALTER COLUMN updated_at SET DEFAULT now()`);
-
-  const pkInfo = await client.query<{ constraint_name: string; column_name: string }>(
-    `
-      SELECT tc.constraint_name, kcu.column_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = 'user_settings'
-        AND tc.constraint_type = 'PRIMARY KEY';
-    `,
-  );
-
-  if (pkInfo.rowCount > 0) {
-    const constraintName = pkInfo.rows[0]!.constraint_name;
-    const onlyId = pkInfo.rows.every((row) => row.column_name === "id");
-    if (!onlyId) {
-      await client.query(`ALTER TABLE public.user_settings DROP CONSTRAINT "${constraintName}"`);
-    }
-  }
-
-  const pkCheck = await client.query<{ constraint_name: string }>(
-    `
-      SELECT constraint_name
-      FROM information_schema.table_constraints
-      WHERE table_schema = 'public'
-        AND table_name = 'user_settings'
-        AND constraint_type = 'PRIMARY KEY'
-      LIMIT 1;
-    `,
-  );
-
-  if (pkCheck.rowCount === 0) {
-    await client.query(`ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_pkey PRIMARY KEY (id)`);
-  }
-
-  const fkInfo = await client.query<{ constraint_name: string; delete_rule: string; referenced_table: string }>(
-    `
-      SELECT rc.constraint_name,
-             rc.delete_rule,
-             tc2.table_name AS referenced_table
-      FROM information_schema.referential_constraints rc
-      JOIN information_schema.table_constraints tc
-        ON rc.constraint_name = tc.constraint_name
-       AND rc.constraint_schema = tc.constraint_schema
-      JOIN information_schema.key_column_usage kcu
-        ON kcu.constraint_name = tc.constraint_name
-       AND kcu.constraint_schema = tc.constraint_schema
-      JOIN information_schema.table_constraints tc2
-        ON rc.unique_constraint_name = tc2.constraint_name
-       AND rc.unique_constraint_schema = tc2.constraint_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = 'user_settings'
-        AND tc.constraint_type = 'FOREIGN KEY'
-        AND kcu.column_name = 'user_id'
-      LIMIT 1;
-    `,
-  );
-
-  if (fkInfo.rowCount > 0) {
-    const { constraint_name: constraintName, delete_rule: deleteRule, referenced_table: referencedTable } = fkInfo.rows[0]!;
-    if (referencedTable !== "users" || deleteRule !== "CASCADE") {
-      await client.query(`ALTER TABLE public.user_settings DROP CONSTRAINT "${constraintName}"`);
-    }
-  }
-
-  const fkCheck = await client.query<{ constraint_name: string }>(
-    `
-      SELECT tc.constraint_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = 'user_settings'
-        AND tc.constraint_type = 'FOREIGN KEY'
-        AND kcu.column_name = 'user_id'
-      LIMIT 1;
-    `,
-  );
-
-  if (fkCheck.rowCount === 0) {
-    await client.query(
-      `ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE`,
-    );
-  }
+  await context.client.query(`UPDATE public.user_settings SET created_at = COALESCE(created_at, now())`);
+  await context.client.query(`UPDATE public.user_settings SET updated_at = COALESCE(updated_at, now())`);
+  await ensureColumnDefault(context, "user_settings", "created_at", "now()", ["now()", "current_timestamp"]);
+  await ensureColumnDefault(context, "user_settings", "updated_at", "now()", ["now()", "current_timestamp"]);
 }
-
-async function ensureUserSettingsUniqueConstraint(client: Client | PoolClient): Promise<void> {
+async function ensureUserSettingsUniqueConstraint(context: GuardContext): Promise<void> {
   const tableName = "user_settings";
   const constraintName = "user_settings_user_id_unique";
   const canonicalIndexName = "user_settings_user_id_unique";
   const constraintColumns = ["user_id"];
 
-  if (!(await tableExists(client, tableName))) {
+  if (!(await tableExists(context, tableName))) {
     console.warn(
       `[userSettingsGuard] table public.${tableName} missing, unable to ensure constraint ${constraintName}.`,
     );
     return;
   }
 
-  const existingConstraint = await client.query<{ constraint_name: string }>(
-    `
-      SELECT tc.constraint_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_schema = 'public'
-        AND tc.table_name = $1
-        AND tc.constraint_type = 'UNIQUE'
-        AND kcu.column_name = $2
-      LIMIT 1;
-    `,
-    [tableName, constraintColumns[0]],
-  );
+  const constraints = await getConstraints(context, tableName, "UNIQUE");
+  const canonical = constraints.find((constraint) => columnsMatch(constraint.columns, constraintColumns));
 
-  if (existingConstraint.rowCount > 0) {
-    const currentName = existingConstraint.rows[0]!.constraint_name;
-    if (currentName !== constraintName) {
-      if (await constraintExists(client, tableName, constraintName, "u")) {
+  if (canonical) {
+    if (canonical.name !== constraintName) {
+      if (await constraintExists(context, tableName, constraintName, "u")) {
         console.warn(
-          `[userSettingsGuard] dropping redundant constraint ${currentName} on public.${tableName} because canonical constraint ${constraintName} already exists.`,
+          `[userSettingsGuard] dropping redundant constraint ${canonical.name} on public.${tableName} because canonical constraint ${constraintName} already exists.`,
         );
-        await client.query(
-          `ALTER TABLE public.${tableName} DROP CONSTRAINT ${quoteIdentifier(currentName)};`,
-        );
+        await dropConstraint(context, tableName, canonical.name);
         return;
       }
 
-      const conflictingIndex = await getIndexMetadata(client, constraintName);
+      const conflictingIndex = await context.schema.getIndexMetadata(constraintName);
       if (conflictingIndex) {
         console.warn(
-          `[userSettingsGuard] skipping rename of constraint ${currentName} on public.${tableName} to ${constraintName} because the target name is already used by an index.`,
+          `[userSettingsGuard] skipping rename of constraint ${canonical.name} on public.${tableName} to ${constraintName} because the target name is already used by an index.`,
         );
         return;
       }
 
       try {
-        await client.query(
-          `ALTER TABLE public.${tableName} RENAME CONSTRAINT ${quoteIdentifier(currentName)} TO ${quoteIdentifier(
-            constraintName,
-          )};`,
-        );
+        await renameConstraint(context, tableName, canonical.name, constraintName);
       } catch (error) {
-        if (!isDuplicateObjectError(error)) {
+        const code = (error as { code?: string }).code;
+        if (code !== "42710" && code !== "42P07") {
           throw error;
         }
         console.warn(
-          `[userSettingsGuard] unable to rename constraint ${currentName} on public.${tableName} to ${constraintName}: ${String(
+          `[userSettingsGuard] unable to rename constraint ${canonical.name} on public.${tableName} to ${constraintName}: ${String(
             (error as Error).message ?? error,
           )}`,
         );
@@ -584,15 +769,15 @@ async function ensureUserSettingsUniqueConstraint(client: Client | PoolClient): 
     return;
   }
 
-  if (await constraintExists(client, tableName, constraintName, "u")) {
+  if (await constraintExists(context, tableName, constraintName, "u")) {
     return;
   }
 
-  let indexName = await findMatchingUniqueIndex(client, tableName, constraintColumns);
+  let indexName = await findMatchingUniqueIndex(context, tableName, constraintColumns);
 
   if (!indexName) {
     indexName = "user_settings_user_id_unique_idx";
-    await ensureIndex(client, {
+    await ensureIndex(context, {
       name: indexName,
       table: tableName,
       columns: constraintColumns,
@@ -601,13 +786,14 @@ async function ensureUserSettingsUniqueConstraint(client: Client | PoolClient): 
   }
 
   try {
-    await client.query(
+    await context.client.query(
       `ALTER TABLE public.${tableName} ADD CONSTRAINT ${quoteIdentifier(constraintName)} UNIQUE USING INDEX ${quoteIdentifier(
         indexName,
       )};`,
     );
   } catch (error) {
-    if (!isDuplicateObjectError(error)) {
+    const code = (error as { code?: string }).code;
+    if (code !== "42710" && code !== "42P07") {
       throw error;
     }
     console.warn(
@@ -615,83 +801,116 @@ async function ensureUserSettingsUniqueConstraint(client: Client | PoolClient): 
     );
   }
 
-  await renameIndexIfNeeded(client, indexName, canonicalIndexName);
+  await renameIndexIfNeeded(context, indexName, canonicalIndexName);
 }
-
-async function ensureUuidColumn(
-  client: Client | PoolClient,
-  tableName: string,
-  columnName: string,
-  options: { notNull?: boolean; fillWithDemoId?: boolean } = {},
-): Promise<void> {
-  if (!(await tableExists(client, tableName))) {
-    return;
-  }
-
-  if (!(await columnExists(client, tableName, columnName))) {
-    await client.query(`ALTER TABLE public.${tableName} ADD COLUMN ${columnName} uuid`);
-  }
-
-  const columnType = await getColumnType(client, tableName, columnName);
-  if (columnType && columnType !== "uuid") {
-    await client.query(
-      `ALTER TABLE public.${tableName} ALTER COLUMN ${columnName} TYPE uuid USING ${columnName}::uuid`,
-    );
-  }
-
-  if (options.fillWithDemoId) {
-    await client.query(
-      `UPDATE public.${tableName} SET ${columnName} = $1::uuid WHERE ${columnName} IS NULL`,
-      [DEMO_USER_ID],
-    );
-  }
-
-  if (options.notNull) {
-    await client.query(`ALTER TABLE public.${tableName} ALTER COLUMN ${columnName} SET NOT NULL`);
-  }
+async function ensureAuxiliaryUserColumns(context: GuardContext): Promise<void> {
+  await ensureUuidColumn(context, "indicator_configs", "user_id", { notNull: true, fillWithDemoId: true });
+  await ensureUuidColumn(context, "positions", "user_id", { notNull: true, fillWithDemoId: true });
+  await ensureUuidColumn(context, "closed_positions", "user_id", { notNull: true, fillWithDemoId: true });
 }
-
-async function ensureAuxiliaryUserColumns(client: Client | PoolClient): Promise<void> {
-  await ensureUuidColumn(client, "indicator_configs", "user_id", { notNull: true, fillWithDemoId: true });
-  await ensureUuidColumn(client, "positions", "user_id", { notNull: true, fillWithDemoId: true });
-  await ensureUuidColumn(client, "closed_positions", "user_id", { notNull: true, fillWithDemoId: true });
-}
-
-async function ensureClosedPositionsIndexes(client: Client | PoolClient): Promise<void> {
-  await ensureIndex(client, {
+async function ensureClosedPositionsIndexes(context: GuardContext): Promise<void> {
+  await ensureIndex(context, {
     name: "idx_closed_positions_symbol_time",
     table: "closed_positions",
     columns: ["symbol", "closed_at"],
   });
 
-  await ensureIndex(client, {
+  await ensureIndex(context, {
     name: "idx_closed_positions_user",
     table: "closed_positions",
     columns: ["user_id"],
   });
 }
+async function ensureIndicatorArtifacts(context: GuardContext): Promise<void> {
+  if (!(await tableExists(context, "indicator_configs"))) {
+    console.warn("[userSettingsGuard] table public.indicator_configs missing, skipping indicator guards.");
+    return;
+  }
 
-async function ensureIndicatorIndexes(client: Client | PoolClient): Promise<void> {
-  await ensureIndex(client, {
+  await ensureIndex(context, {
     name: "idx_indicator_configs_user_name",
     table: "indicator_configs",
     columns: ["user_id", "name"],
     unique: true,
   });
-}
 
-async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
-  if (!(await tableExists(client, "users"))) {
+  let columns = await context.schema.getColumns("indicator_configs");
+  if (columns.has("updated_at")) {
+    await context.client.query(
+      `UPDATE public.indicator_configs SET created_at = COALESCE(created_at, updated_at)`,
+    );
+    await context.client.query(`ALTER TABLE public.indicator_configs DROP COLUMN IF EXISTS updated_at`);
+    context.schema.invalidateTable("indicator_configs");
+    columns = await context.schema.getColumns("indicator_configs");
+  }
+
+  if (columns.has("created_at")) {
+    await ensureColumnDefault(context, "indicator_configs", "created_at", "now()", ["now()", "current_timestamp"]);
+  }
+
+  await ensureColumnNotNull(context, "indicator_configs", "name");
+  await ensureUuidColumn(context, "indicator_configs", "user_id", { notNull: true });
+}
+async function ensurePairTimeframesArtifacts(context: GuardContext): Promise<void> {
+  await context.client.query(`
+    CREATE TABLE IF NOT EXISTS public.pair_timeframes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      symbol text,
+      timeframe text,
+      created_at timestamp DEFAULT now()
+    );
+  `);
+  context.schema.invalidateTable("pair_timeframes");
+
+  await ensureUuidColumn(context, "pair_timeframes", "id", { notNull: true });
+  await ensureColumnDefault(context, "pair_timeframes", "id", "gen_random_uuid()", ["gen_random_uuid()"]);
+
+  let columns = await context.schema.getColumns("pair_timeframes");
+  const hasTf = columns.has("tf");
+  const hasTimeframe = columns.has("timeframe");
+
+  if (hasTf && !hasTimeframe) {
+    await context.client.query(`ALTER TABLE public.pair_timeframes RENAME COLUMN tf TO timeframe`);
+    context.schema.invalidateTable("pair_timeframes");
+    columns = await context.schema.getColumns("pair_timeframes");
+  } else if (hasTf && hasTimeframe) {
+    await context.client.query(
+      `UPDATE public.pair_timeframes SET timeframe = COALESCE(timeframe, tf)`,
+    );
+    await context.client.query(`ALTER TABLE public.pair_timeframes DROP COLUMN tf`);
+    context.schema.invalidateTable("pair_timeframes");
+    columns = await context.schema.getColumns("pair_timeframes");
+  }
+
+  if (!columns.has("timeframe")) {
+    await context.client.query(`ALTER TABLE public.pair_timeframes ADD COLUMN timeframe text`);
+    context.schema.invalidateTable("pair_timeframes");
+    columns = await context.schema.getColumns("pair_timeframes");
+  }
+
+  await ensureColumnNotNull(context, "pair_timeframes", "timeframe", { skipIfNullsExist: true });
+  await ensureColumnNotNull(context, "pair_timeframes", "symbol", { skipIfNullsExist: true });
+  await ensureColumnDefault(context, "pair_timeframes", "created_at", "now()", ["now()", "current_timestamp"]);
+
+  await ensureIndex(context, {
+    name: "pair_timeframes_symbol_timeframe_unique",
+    table: "pair_timeframes",
+    columns: ["symbol", "timeframe"],
+    unique: true,
+  });
+}
+async function ensureDemoUser(context: GuardContext): Promise<void> {
+  if (!(await tableExists(context, "users"))) {
     console.warn("[userSettingsGuard] table public.users missing, skipping demo user upsert.");
     return;
   }
 
   const [{ rows: demoByIdRows }, { rows: legacyRows }] = await Promise.all([
-    client.query<{ id: string }>(
+    context.client.query<{ id: string }>(
       `SELECT id::text AS id FROM public.users WHERE id = $1::uuid LIMIT 1;`,
       [DEMO_USER_ID],
     ),
-    client.query<{ id: string }>(
+    context.client.query<{ id: string }>(
       `SELECT id::text AS id FROM public.users WHERE username = $1 LIMIT 1;`,
       [DEFAULT_SESSION_USERNAME],
     ),
@@ -700,19 +919,21 @@ async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
   const existingDemoById = demoByIdRows[0]?.id ?? null;
   const legacyId = legacyRows[0]?.id ?? null;
 
-  const hasUserSettings = await tableExists(client, "user_settings");
-  const hasIndicatorConfigs = await tableExists(client, "indicator_configs");
-  const hasPositions = await tableExists(client, "positions");
-  const hasClosedPositions = await tableExists(client, "closed_positions");
+  const [hasUserSettings, hasIndicatorConfigs, hasPositions, hasClosedPositions] = await Promise.all([
+    tableExists(context, "user_settings"),
+    tableExists(context, "indicator_configs"),
+    tableExists(context, "positions"),
+    tableExists(context, "closed_positions"),
+  ]);
 
   if (legacyId && legacyId !== DEMO_USER_ID) {
     if (hasUserSettings) {
       const [legacySettings, demoSettings] = await Promise.all([
-        client.query<{ exists: boolean }>(
+        context.client.query<{ exists: boolean }>(
           `SELECT EXISTS(SELECT 1 FROM public.user_settings WHERE user_id = $1::uuid) AS exists;`,
           [legacyId],
         ),
-        client.query<{ exists: boolean }>(
+        context.client.query<{ exists: boolean }>(
           `SELECT EXISTS(SELECT 1 FROM public.user_settings WHERE user_id = $1::uuid) AS exists;`,
           [DEMO_USER_ID],
         ),
@@ -720,9 +941,9 @@ async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
 
       if (legacySettings.rows[0]?.exists) {
         if (demoSettings.rows[0]?.exists) {
-          await client.query(`DELETE FROM public.user_settings WHERE user_id = $1::uuid`, [legacyId]);
+          await context.client.query(`DELETE FROM public.user_settings WHERE user_id = $1::uuid`, [legacyId]);
         } else {
-          await client.query(
+          await context.client.query(
             `UPDATE public.user_settings SET user_id = $1::uuid WHERE user_id = $2::uuid`,
             [DEMO_USER_ID, legacyId],
           );
@@ -731,37 +952,37 @@ async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
     }
 
     if (hasIndicatorConfigs) {
-      await client.query(
+      await context.client.query(
         `UPDATE public.indicator_configs SET user_id = $1::uuid WHERE user_id = $2::uuid`,
         [DEMO_USER_ID, legacyId],
       );
     }
 
     if (hasPositions) {
-      await client.query(
+      await context.client.query(
         `UPDATE public.positions SET user_id = $1::uuid WHERE user_id = $2::uuid`,
         [DEMO_USER_ID, legacyId],
       );
     }
 
     if (hasClosedPositions) {
-      await client.query(
+      await context.client.query(
         `UPDATE public.closed_positions SET user_id = $1::uuid WHERE user_id = $2::uuid`,
         [DEMO_USER_ID, legacyId],
       );
     }
 
     if (existingDemoById) {
-      await client.query(`DELETE FROM public.users WHERE id = $1::uuid`, [legacyId]);
+      await context.client.query(`DELETE FROM public.users WHERE id = $1::uuid`, [legacyId]);
     } else {
-      await client.query(
+      await context.client.query(
         `UPDATE public.users SET id = $1::uuid, username = $2, password = $3 WHERE id = $4::uuid`,
         [DEMO_USER_ID, DEFAULT_SESSION_USERNAME, DEFAULT_SESSION_PASSWORD, legacyId],
       );
     }
   }
 
-  await client.query(
+  await context.client.query(
     `
       INSERT INTO public.users (id, username, password)
       VALUES ($1::uuid, $2, $3)
@@ -773,7 +994,7 @@ async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
   );
 
   if (hasUserSettings) {
-    await client.query(
+    await context.client.query(
       `
         INSERT INTO public.user_settings (
           id,
@@ -791,36 +1012,83 @@ async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
       [DEMO_USER_ID],
     );
 
-    await client.query(
+    await context.client.query(
       `UPDATE public.user_settings SET updated_at = COALESCE(updated_at, now()) WHERE user_id = $1::uuid`,
       [DEMO_USER_ID],
     );
   }
 }
+function enumerateErrors(error: unknown): unknown[] {
+  if (error instanceof AggregateError) {
+    return Array.from(error.errors);
+  }
+  const errors = (error as { errors?: unknown[] }).errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    return errors;
+  }
+  return [error];
+}
+
+function isConnectionError(error: unknown): boolean {
+  return enumerateErrors(error).some((candidate) => {
+    const code = (candidate as { code?: string }).code;
+    return code === "ECONNREFUSED" || code === "57P03";
+  });
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
 
 export async function ensureUserSettingsGuard(db: Pool | Client): Promise<void> {
   const isPoolInstance = isPool(db);
-  const client = isPoolInstance ? await db.connect() : db;
+  let client: Client | PoolClient;
+
+  try {
+    client = isPoolInstance ? await db.connect() : db;
+  } catch (error) {
+    if (isConnectionError(error)) {
+      console.error(
+        `[userSettingsGuard] unable to obtain database connection: ${extractErrorMessage(error)}`,
+      );
+    }
+    throw error;
+  }
+
   const releasable = isPoolInstance ? (client as PoolClient) : null;
+  const schema = createSchemaInspector(client);
+  const context: GuardContext = { client, schema };
 
   try {
     await client.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
 
     await client.query("BEGIN");
     try {
-      await ensureUsersTable(client);
-      await ensureUserSettingsTable(client);
-      await ensureUserSettingsUniqueConstraint(client);
-      await ensureAuxiliaryUserColumns(client);
-      await ensureIndicatorIndexes(client);
-      await ensureClosedPositionsIndexes(client);
-      await ensureDemoUser(client);
+      await ensureUsersTable(context);
+      await ensureUserSettingsTable(context);
+      await ensureUserSettingsUniqueConstraint(context);
+      await ensureAuxiliaryUserColumns(context);
+      await ensureIndicatorArtifacts(context);
+      await ensureClosedPositionsIndexes(context);
+      await ensurePairTimeframesArtifacts(context);
+      await ensureDemoUser(context);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     }
+  } catch (error) {
+    if (isConnectionError(error)) {
+      console.error(
+        `[userSettingsGuard] database self-heal aborted due to connection failure: ${extractErrorMessage(error)}`,
+      );
+    }
+    throw error;
   } finally {
+    schema.clear();
     if (releasable) {
       releasable.release();
     }
