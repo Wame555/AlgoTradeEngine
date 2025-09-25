@@ -20,8 +20,8 @@ BEGIN
           AND table_name = 'pair_timeframes'
           AND column_name = 'tf'
     ) THEN
-        EXECUTE $$UPDATE public."pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf") WHERE "tf" IS NOT NULL$$;
-        EXECUTE $$ALTER TABLE public."pair_timeframes" DROP COLUMN "tf"$$;
+        EXECUTE 'UPDATE public."pair_timeframes" SET "timeframe" = COALESCE("timeframe", "tf") WHERE "tf" IS NOT NULL';
+        EXECUTE 'ALTER TABLE public."pair_timeframes" DROP COLUMN "tf"';
     END IF;
 END
 $$;
@@ -37,7 +37,7 @@ BEGIN
           AND column_name = 'timeframe'
     ) THEN
         IF NOT EXISTS (SELECT 1 FROM public."pair_timeframes" WHERE "timeframe" IS NULL) THEN
-            EXECUTE $$ALTER TABLE public."pair_timeframes" ALTER COLUMN "timeframe" SET NOT NULL$$;
+            EXECUTE 'ALTER TABLE public."pair_timeframes" ALTER COLUMN "timeframe" SET NOT NULL';
         END IF;
     END IF;
 END
@@ -52,7 +52,7 @@ BEGIN
         WHERE schemaname = 'public'
           AND indexname = 'pair_timeframes_symbol_timeframe_unique'
     ) THEN
-        EXECUTE $$CREATE UNIQUE INDEX IF NOT EXISTS public.pair_timeframes_symbol_timeframe_unique ON public."pair_timeframes" ("symbol", "timeframe")$$;
+        EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS pair_timeframes_symbol_timeframe_unique ON public."pair_timeframes" ("symbol", "timeframe")';
     END IF;
 END
 $$;

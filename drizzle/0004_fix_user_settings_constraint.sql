@@ -24,6 +24,15 @@ BEGIN
       AND column_name = 'id'
   ) THEN
     EXECUTE 'ALTER TABLE public.user_settings ADD COLUMN id uuid';
+  ELSIF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_settings'
+      AND column_name = 'id'
+      AND data_type <> 'uuid'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.user_settings ALTER COLUMN id TYPE uuid USING id::uuid';
   END IF;
 
   EXECUTE 'UPDATE public.user_settings SET id = COALESCE(id, gen_random_uuid())';
@@ -87,7 +96,17 @@ BEGIN
   LIMIT 1;
 
   IF v_unique_name IS NULL THEN
-    EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+    IF EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'user_settings'
+        AND indexname = 'user_settings_user_id_unique'
+    ) THEN
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE USING INDEX user_settings_user_id_unique';
+    ELSE
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+    END IF;
   ELSIF v_unique_name <> 'user_settings_user_id_unique' THEN
     EXECUTE format(
       'ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_unique',

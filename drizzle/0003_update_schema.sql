@@ -61,7 +61,7 @@ BEGIN
   END IF;
 
   UPDATE public."indicator_configs"
-  SET user_id = COALESCE(user_id, default_user_id),
+  SET user_id = COALESCE(user_id, default_user_id::text),
       created_at = COALESCE(created_at, now());
 
   IF EXISTS (
@@ -164,7 +164,7 @@ BEGIN
   END IF;
 
   EXECUTE 'UPDATE public."closed_positions" SET "pnl_usd" = COALESCE("pnl_usd", 0)';
-  EXECUTE 'UPDATE public."closed_positions" SET "user_id" = COALESCE("user_id", $1)' USING default_user_id;
+  EXECUTE 'UPDATE public."closed_positions" SET "user_id" = COALESCE(("user_id")::uuid, $1::uuid)::text' USING default_user_id;
 END $$;
 
 DO $$
@@ -239,6 +239,6 @@ DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time;
 DROP INDEX IF EXISTS public.idx_closed_positions_user;
 DROP INDEX IF EXISTS public.idx_indicator_configs_user_name;
 
-CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time");
-CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user ON public.closed_positions("user_id");
-CREATE INDEX IF NOT EXISTS public.idx_indicator_configs_user_name ON public.indicator_configs("user_id", "name");
+CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol_time ON public.closed_positions(symbol, closed_at);
+CREATE INDEX IF NOT EXISTS idx_closed_positions_user ON public.closed_positions(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name ON public.indicator_configs(user_id, name);

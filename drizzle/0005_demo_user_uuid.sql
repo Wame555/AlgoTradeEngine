@@ -97,7 +97,17 @@ BEGIN
   LIMIT 1;
 
   IF unique_name IS NULL THEN
-    EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE (username)';
+    IF EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'users'
+        AND indexname = 'users_username_unique'
+    ) THEN
+      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE USING INDEX users_username_unique';
+    ELSE
+      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE (username)';
+    END IF;
   ELSIF unique_name <> 'users_username_unique' THEN
     EXECUTE format('ALTER TABLE public.users RENAME CONSTRAINT %I TO users_username_unique', unique_name);
   END IF;
@@ -226,7 +236,17 @@ BEGIN
   LIMIT 1;
 
   IF unique_name IS NULL THEN
-    EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+    IF EXISTS (
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'user_settings'
+        AND indexname = 'user_settings_user_id_unique'
+    ) THEN
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE USING INDEX user_settings_user_id_unique';
+    ELSE
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+    END IF;
   ELSIF unique_name <> 'user_settings_user_id_unique' THEN
     EXECUTE format('ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_unique', unique_name);
   END IF;
@@ -356,6 +376,11 @@ BEGIN
     RETURN;
   END IF;
 
+  IF to_regclass('public.user_settings') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE public.user_settings ALTER CONSTRAINT user_settings_user_id_fkey DEFERRABLE INITIALLY IMMEDIATE';
+    EXECUTE 'SET CONSTRAINTS user_settings_user_id_fkey DEFERRED';
+  END IF;
+
   SELECT id
   INTO legacy_id
   FROM public.users
@@ -363,12 +388,24 @@ BEGIN
   ORDER BY (id = demo_id) DESC, created_at ASC
   LIMIT 1;
 
-  SELECT EXISTS (
-    SELECT 1 FROM public.users WHERE id = demo_id
-  )
+  SELECT EXISTS (SELECT 1 FROM public.users WHERE id = demo_id)
   INTO has_demo;
 
   IF legacy_id IS NOT NULL AND legacy_id <> demo_id THEN
+    EXECUTE 'UPDATE public.users SET username = username || ''_legacy_'' || encode(gen_random_bytes(4), ''hex'') WHERE id = $1::uuid'
+      USING legacy_id;
+
+    EXECUTE '
+      INSERT INTO public.users (id, username, password, created_at)
+      SELECT $1::uuid, $2, $3, COALESCE(created_at, now())
+      FROM public.users
+      WHERE id = $4::uuid
+      ON CONFLICT (id) DO UPDATE SET
+        username = EXCLUDED.username,
+        password = EXCLUDED.password
+    '
+    USING demo_id, demo_username, demo_password, legacy_id;
+
     IF to_regclass('public.user_settings') IS NOT NULL THEN
       IF EXISTS (SELECT 1 FROM public.user_settings WHERE user_id = legacy_id) THEN
         IF EXISTS (SELECT 1 FROM public.user_settings WHERE user_id = demo_id) THEN
@@ -391,21 +428,19 @@ BEGIN
       EXECUTE 'UPDATE public.closed_positions SET user_id = $1::uuid WHERE user_id = $2::uuid' USING demo_id, legacy_id;
     END IF;
 
-    IF has_demo THEN
+    IF EXISTS (SELECT 1 FROM public.users WHERE id = legacy_id) THEN
       EXECUTE 'DELETE FROM public.users WHERE id = $1::uuid' USING legacy_id;
-    ELSE
-      EXECUTE 'UPDATE public.users SET id = $1::uuid, username = $2, password = $3 WHERE id = $4::uuid'
-        USING demo_id, demo_username, demo_password, legacy_id;
     END IF;
+  ELSE
+    EXECUTE '
+      INSERT INTO public.users (id, username, password)
+      VALUES ($1::uuid, $2, $3)
+      ON CONFLICT (id) DO UPDATE SET
+        username = EXCLUDED.username,
+        password = EXCLUDED.password
+    '
+    USING demo_id, demo_username, demo_password;
   END IF;
-
-  EXECUTE '
-    INSERT INTO public.users (id, username, password)
-    VALUES ($1::uuid, $2, $3)
-    ON CONFLICT (id) DO UPDATE
-      SET username = EXCLUDED.username,
-          password = EXCLUDED.password
-  ' USING demo_id, demo_username, demo_password;
 
   IF to_regclass('public.user_settings') IS NOT NULL THEN
     EXECUTE '
@@ -419,14 +454,14 @@ BEGIN
         default_tp_pct,
         default_sl_pct
       )
-      SELECT gen_random_uuid(), $1::uuid, true, 1, 2, true, ''1.00'', ''0.50''
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM public.user_settings
-        WHERE user_id = $1::uuid
-      )
-    ' USING demo_id;
+      SELECT gen_random_uuid(), u.id, true, 1, 2, true, ''1.00'', ''0.50''
+      FROM public.users u
+      LEFT JOIN public.user_settings s ON s.user_id = u.id
+      WHERE u.id = $1::uuid AND s.id IS NULL
+    '
+    USING demo_id;
+
+    EXECUTE 'SET CONSTRAINTS user_settings_user_id_fkey IMMEDIATE';
+    EXECUTE 'ALTER TABLE public.user_settings ALTER CONSTRAINT user_settings_user_id_fkey NOT DEFERRABLE';
   END IF;
 END $$;
-
-COMMIT;
