@@ -195,11 +195,11 @@ export class DatabaseStorage implements IStorage {
 
     const updateAssignments = Object.entries(updatePayload)
       .filter(([key]) => key !== "userId")
-      .map(([key, value]) => sql`${sql.identifier([columnMap[key as keyof UserSettingsInsert]])} = ${value}`);
-    updateAssignments.push(sql`${sql.identifier([columnMap.updatedAt])} = ${now}`);
+      .map(([key, value]) => sql`${sql.identifier(columnMap[key as keyof UserSettingsInsert])} = ${value}`);
+    updateAssignments.push(sql`${sql.identifier(columnMap.updatedAt)} = ${now}`);
 
     const insertColumnsSql = sql.join(
-      insertColumns.map((column) => sql.identifier([column])),
+      insertColumns.map((column) => sql.identifier(column)),
       sql`, `,
     );
     const insertValuesSql = sql.join(insertValues.map((value) => sql`${value}`), sql`, `);
@@ -221,7 +221,7 @@ export class DatabaseStorage implements IStorage {
       console.warn("[storage.upsertUserSettings] failed", {
         insertColumns,
         insertValues,
-        updateAssignments: updateAssignments.map((assignment) => assignment.toQuery?.() ?? assignment),
+        updateAssignmentsCount: updateAssignments.length,
       });
       throw error;
     }
@@ -429,11 +429,14 @@ export class DatabaseStorage implements IStorage {
       .limit(limit)
       .offset(offset);
 
-    return rows.map((row) => ({
-      ...row,
-      pnlUsd: typeof row.pnlUsd === "number" ? row.pnlUsd.toString() : (row.pnlUsd ?? "0"),
-      pnlPct: typeof row.pnlPct === "number" ? row.pnlPct : Number(row.pnlPct ?? 0),
-    }));
+    return rows.map((row) => {
+      const pnlUsdValue = row.pnlUsd as unknown;
+      return {
+        ...row,
+        pnlUsd: typeof pnlUsdValue === "number" ? pnlUsdValue.toString() : String(pnlUsdValue ?? "0"),
+        pnlPct: Number((row.pnlPct as unknown) ?? 0),
+      };
+    });
   }
 
   async insertClosedPosition(data: InsertClosedPosition): Promise<ClosedPosition> {
