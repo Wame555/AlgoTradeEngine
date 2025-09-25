@@ -104,12 +104,12 @@ BEGIN
         AND tablename = 'users'
         AND indexname = 'users_username_unique'
     ) THEN
-      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE USING INDEX users_username_unique';
+      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_uniq UNIQUE USING INDEX users_username_unique';
     ELSE
-      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_unique UNIQUE (username)';
+      EXECUTE 'ALTER TABLE public.users ADD CONSTRAINT users_username_uniq UNIQUE (username)';
     END IF;
-  ELSIF unique_name <> 'users_username_unique' THEN
-    EXECUTE format('ALTER TABLE public.users RENAME CONSTRAINT %I TO users_username_unique', unique_name);
+  ELSIF unique_name <> 'users_username_uniq' THEN
+    EXECUTE format('ALTER TABLE public.users RENAME CONSTRAINT %I TO users_username_uniq', unique_name);
   END IF;
 END $$;
 
@@ -241,14 +241,14 @@ BEGIN
       FROM pg_indexes
       WHERE schemaname = 'public'
         AND tablename = 'user_settings'
-        AND indexname = 'user_settings_user_id_unique'
+        AND indexname IN ('user_settings_user_id_unique', 'user_settings_user_id_uniq_idx', 'idx_user_settings_user_id')
     ) THEN
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE USING INDEX user_settings_user_id_unique';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE USING INDEX user_settings_user_id_unique';
     ELSE
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE (user_id)';
     END IF;
-  ELSIF unique_name <> 'user_settings_user_id_unique' THEN
-    EXECUTE format('ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_unique', unique_name);
+  ELSIF unique_name <> 'user_settings_user_id_uniq' THEN
+    EXECUTE format('ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_uniq', unique_name);
   END IF;
 
   SELECT rc.constraint_name,
@@ -400,7 +400,7 @@ BEGIN
       SELECT $1::uuid, $2, $3, COALESCE(created_at, now())
       FROM public.users
       WHERE id = $4::uuid
-      ON CONFLICT (id) DO UPDATE SET
+      ON CONFLICT ON CONSTRAINT users_pkey DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password
     '
@@ -435,7 +435,7 @@ BEGIN
     EXECUTE '
       INSERT INTO public.users (id, username, password)
       VALUES ($1::uuid, $2, $3)
-      ON CONFLICT (id) DO UPDATE SET
+      ON CONFLICT ON CONSTRAINT users_pkey DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password
     '

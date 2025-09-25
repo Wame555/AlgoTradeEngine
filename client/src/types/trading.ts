@@ -97,8 +97,8 @@ export interface UserSettings {
   defaultLeverage: number;
   riskPercent: number;
   demoEnabled: boolean;
-  defaultTpPct: number;
-  defaultSlPct: number;
+  defaultTpPct: string;
+  defaultSlPct: string;
   createdAt: string;
   updatedAt: string;
 }

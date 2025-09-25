@@ -122,6 +122,34 @@ function mapPositionRow(row: Record<string, any>): Position {
   };
 }
 
+function mapUserRow(row: Record<string, any>): User {
+  return {
+    id: row.id,
+    username: row.username,
+    password: row.password,
+    createdAt: row.created_at,
+  };
+}
+
+function mapIndicatorConfigRow(row: Record<string, any>): IndicatorConfig {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    payload: row.payload ?? {},
+    createdAt: row.created_at,
+  };
+}
+
+function mapPairTimeframeRow(row: Record<string, any>): PairTimeframe {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    timeframe: row.timeframe,
+    createdAt: row.created_at,
+  };
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -135,14 +163,17 @@ export class DatabaseStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const inserted = await db
-      .insert(users)
-      .values({ ...insertUser, id })
-      .onConflictDoNothing({ target: users.username })
-      .returning();
+    const inserted = await db.execute(
+      sql`
+        INSERT INTO public.users (id, username, password)
+        VALUES (${id}::uuid, ${insertUser.username}, ${insertUser.password})
+        ON CONFLICT ON CONSTRAINT users_username_uniq DO NOTHING
+        RETURNING *;
+      `,
+    );
 
-    if (inserted.length > 0) {
-      return inserted[0]!;
+    if (inserted.rows.length > 0) {
+      return mapUserRow(inserted.rows[0]!);
     }
 
     const [existing] = await db
@@ -195,11 +226,11 @@ export class DatabaseStorage implements IStorage {
 
     const updateAssignments = Object.entries(updatePayload)
       .filter(([key]) => key !== "userId")
-      .map(([key, value]) => sql`${sql.identifier([columnMap[key as keyof UserSettingsInsert]])} = ${value}`);
-    updateAssignments.push(sql`${sql.identifier([columnMap.updatedAt])} = ${now}`);
+      .map(([key, value]) => sql`${sql.identifier(columnMap[key as keyof UserSettingsInsert])} = ${value}`);
+    updateAssignments.push(sql`${sql.identifier(columnMap.updatedAt)} = ${now}`);
 
     const insertColumnsSql = sql.join(
-      insertColumns.map((column) => sql.identifier([column])),
+      insertColumns.map((column) => sql.identifier(column)),
       sql`, `,
     );
     const insertValuesSql = sql.join(insertValues.map((value) => sql`${value}`), sql`, `);
@@ -210,7 +241,7 @@ export class DatabaseStorage implements IStorage {
         sql`
           INSERT INTO public.user_settings (${insertColumnsSql})
           VALUES (${insertValuesSql})
-          ON CONFLICT ON CONSTRAINT user_settings_user_id_unique
+          ON CONFLICT ON CONSTRAINT user_settings_user_id_uniq
           DO UPDATE SET ${updateSetSql}
           RETURNING *;
         `,
@@ -221,7 +252,7 @@ export class DatabaseStorage implements IStorage {
       console.warn("[storage.upsertUserSettings] failed", {
         insertColumns,
         insertValues,
-        updateAssignments: updateAssignments.map((assignment) => assignment.toQuery?.() ?? assignment),
+        updateAssignmentsCount: updateAssignments.length,
       });
       throw error;
     }
@@ -246,18 +277,18 @@ export class DatabaseStorage implements IStorage {
 
   async createIndicatorConfig(config: InsertIndicatorConfig): Promise<IndicatorConfig> {
     const id = randomUUID();
-    const [row] = await db
-      .insert(indicatorConfigs)
-      .values({ ...config, id })
-      .onConflictDoUpdate({
-        target: [indicatorConfigs.userId, indicatorConfigs.name],
-        set: {
-          payload: config.payload,
-          createdAt: new Date(),
-        },
-      })
-      .returning();
-    return row;
+    const now = new Date();
+    const result = await db.execute(
+      sql`
+        INSERT INTO public.indicator_configs (id, user_id, name, payload, created_at)
+        VALUES (${id}::uuid, ${config.userId}::uuid, ${config.name}, ${JSON.stringify(config.payload)}::jsonb, ${now})
+        ON CONFLICT ON CONSTRAINT indicator_configs_user_id_name_uniq
+        DO UPDATE SET payload = EXCLUDED.payload, created_at = EXCLUDED.created_at
+        RETURNING *;
+      `,
+    );
+
+    return mapIndicatorConfigRow(result.rows[0]!);
   }
 
   async deleteIndicatorConfig(id: string, userId: string): Promise<void> {
@@ -279,10 +310,13 @@ export class DatabaseStorage implements IStorage {
     }
 
     for (const config of DEFAULT_INDICATOR_CONFIGS) {
-      await db
-        .insert(indicatorConfigs)
-        .values({ id: randomUUID(), userId, name: config.name, payload: config.payload })
-        .onConflictDoNothing({ target: [indicatorConfigs.userId, indicatorConfigs.name] });
+      await db.execute(
+        sql`
+          INSERT INTO public.indicator_configs (id, user_id, name, payload, created_at)
+          VALUES (${randomUUID()}::uuid, ${userId}::uuid, ${config.name}, ${JSON.stringify(config.payload)}::jsonb, now())
+          ON CONFLICT ON CONSTRAINT indicator_configs_user_id_name_uniq DO NOTHING;
+        `,
+      );
     }
   }
 
@@ -429,11 +463,14 @@ export class DatabaseStorage implements IStorage {
       .limit(limit)
       .offset(offset);
 
-    return rows.map((row) => ({
-      ...row,
-      pnlUsd: typeof row.pnlUsd === "number" ? row.pnlUsd.toString() : (row.pnlUsd ?? "0"),
-      pnlPct: typeof row.pnlPct === "number" ? row.pnlPct : Number(row.pnlPct ?? 0),
-    }));
+    return rows.map((row) => {
+      const pnlUsdValue = row.pnlUsd as unknown;
+      return {
+        ...row,
+        pnlUsd: typeof pnlUsdValue === "number" ? pnlUsdValue.toString() : String(pnlUsdValue ?? "0"),
+        pnlPct: Number((row.pnlPct as unknown) ?? 0),
+      };
+    });
   }
 
   async insertClosedPosition(data: InsertClosedPosition): Promise<ClosedPosition> {
@@ -482,13 +519,17 @@ export class DatabaseStorage implements IStorage {
 
       const rows: PairTimeframe[] = [];
       for (const timeframe of timeframes) {
-        const [row] = await tx
-          .insert(pairTimeframes)
-          .values({ id: randomUUID(), symbol, timeframe })
-          .onConflictDoNothing({ target: [pairTimeframes.symbol, pairTimeframes.timeframe] })
-          .returning();
-        if (row) {
-          rows.push(row);
+        const result = await tx.execute(
+          sql`
+            INSERT INTO public.pair_timeframes (id, symbol, timeframe)
+            VALUES (${randomUUID()}::uuid, ${symbol}, ${timeframe})
+            ON CONFLICT ON CONSTRAINT pair_timeframes_symbol_timeframe_uniq DO NOTHING
+            RETURNING *;
+          `,
+        );
+
+        if (result.rows[0]) {
+          rows.push(mapPairTimeframeRow(result.rows[0]!));
         }
       }
       return rows;
@@ -508,16 +549,36 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void> {
-    await db
-      .insert(marketData)
-      .values(data as any)
-      .onConflictDoUpdate({
-        target: [marketData.symbol, marketData.timeframe],
-        set: {
-          ...data,
-          updatedAt: new Date(),
-        },
-      });
+    if (!data.timeframe) {
+      throw new Error("updateMarketData requires a timeframe value");
+    }
+
+    const now = new Date();
+
+    await db.execute(
+      sql`
+        INSERT INTO public.market_data (id, symbol, timeframe, price, volume, change_24h, high_24h, low_24h, updated_at)
+        VALUES (
+          COALESCE(${(data as any).id ?? null}::uuid, gen_random_uuid()),
+          ${data.symbol},
+          ${data.timeframe},
+          ${data.price ?? null},
+          ${data.volume ?? null},
+          ${data.change24h ?? null},
+          ${data.high24h ?? null},
+          ${data.low24h ?? null},
+          ${now}
+        )
+        ON CONFLICT ON CONSTRAINT market_data_symbol_timeframe_uniq
+        DO UPDATE SET
+          price = COALESCE(EXCLUDED.price, public.market_data.price),
+          volume = COALESCE(EXCLUDED.volume, public.market_data.volume),
+          change_24h = COALESCE(EXCLUDED.change_24h, public.market_data.change_24h),
+          high_24h = COALESCE(EXCLUDED.high_24h, public.market_data.high_24h),
+          low_24h = COALESCE(EXCLUDED.low_24h, public.market_data.low_24h),
+          updated_at = ${now};
+      `,
+    );
   }
 }
 

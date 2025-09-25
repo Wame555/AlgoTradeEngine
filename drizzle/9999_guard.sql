@@ -2,7 +2,7 @@ DO $$
 DECLARE
   existing_constraint text;
   matching_index text;
-  canonical_index text := 'user_settings_user_id_unique';
+  canonical_index text := 'user_settings_user_id_uniq';
   canonical_regclass regclass;
 BEGIN
   IF to_regclass('public.user_settings') IS NULL THEN
@@ -55,8 +55,8 @@ BEGIN
   LIMIT 1;
 
   IF matching_index IS NULL THEN
-    matching_index := 'user_settings_user_id_unique_idx';
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS user_settings_user_id_unique_idx ON public.user_settings(user_id)';
+    matching_index := 'idx_user_settings_user_id';
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_id ON public.user_settings(user_id)';
   END IF;
 
   BEGIN
@@ -157,7 +157,7 @@ BEGIN
     JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
     WHERE n.nspname = 'public'
       AND t.relname = 'indicator_configs'
-      AND i.relname = 'idx_indicator_configs_user_name'
+      AND i.relname = 'idx_indicator_configs_user_id_name'
       AND ix.indisunique
       AND ix.indpred IS NULL
     GROUP BY i.relname
@@ -165,7 +165,7 @@ BEGIN
   ) INTO has_indicator_index;
 
   IF NOT has_indicator_index THEN
-    EXECUTE 'DROP INDEX IF EXISTS public.idx_indicator_configs_user_name';
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name ON public.indicator_configs(user_id, name)';
+    EXECUTE 'DROP INDEX IF EXISTS public.idx_indicator_configs_user_id_name';
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_id_name ON public.indicator_configs(user_id, name)';
   END IF;
 END$$;

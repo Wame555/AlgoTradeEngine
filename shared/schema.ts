@@ -10,7 +10,7 @@ import {
   real,
   text,
   timestamp,
-  uniqueIndex,
+  unique,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -18,25 +18,37 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // User table
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    username: text("username").notNull(),
+    password: text("password").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    usernameUniq: unique("users_username_uniq").on(table.username),
+  }),
+);
 
 // Trading pairs
-export const tradingPairs = pgTable("trading_pairs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar("symbol", { length: 20 }).notNull().unique(),
-  baseAsset: varchar("base_asset", { length: 10 }).notNull(),
-  quoteAsset: varchar("quote_asset", { length: 10 }).notNull(),
-  isActive: boolean("is_active").default(true),
-  minNotional: numeric("min_notional", { precision: 18, scale: 8 }),
-  minQty: numeric("min_qty", { precision: 18, scale: 8 }),
-  stepSize: numeric("step_size", { precision: 18, scale: 8 }),
-  tickSize: numeric("tick_size", { precision: 18, scale: 8 }),
-});
+export const tradingPairs = pgTable(
+  "trading_pairs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    baseAsset: varchar("base_asset", { length: 10 }).notNull(),
+    quoteAsset: varchar("quote_asset", { length: 10 }).notNull(),
+    isActive: boolean("is_active").default(true),
+    minNotional: numeric("min_notional", { precision: 18, scale: 8 }),
+    minQty: numeric("min_qty", { precision: 18, scale: 8 }),
+    stepSize: numeric("step_size", { precision: 18, scale: 8 }),
+    tickSize: numeric("tick_size", { precision: 18, scale: 8 }),
+  },
+  (table) => ({
+    symbolUniq: unique("trading_pairs_symbol_uniq").on(table.symbol),
+  }),
+);
 
 // User settings
 export const userSettings = pgTable(
@@ -60,7 +72,7 @@ export const userSettings = pgTable(
     updatedAt: timestamp("updated_at").defaultNow(),
   },
   (table) => ({
-    userIdUnique: uniqueIndex("user_settings_user_id_unique").on(table.userId),
+    userIdUniq: unique("user_settings_user_id_uniq").on(table.userId),
   }),
 );
 
@@ -75,7 +87,7 @@ export const indicatorConfigs = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => ({
-    userNameUnique: uniqueIndex("idx_indicator_configs_user_name").on(
+    userNameUniq: unique("indicator_configs_user_id_name_uniq").on(
       table.userId,
       table.name,
     ),
@@ -148,28 +160,34 @@ export const pairTimeframes = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => ({
-    symbolTimeframeUnique: uniqueIndex("pair_timeframes_symbol_timeframe_unique").on(
+    symbolTimeframeUniq: unique("pair_timeframes_symbol_timeframe_uniq").on(
       table.symbol,
       table.timeframe,
     ),
   }),
-  {
-    schema: "public",
-  },
 );
 
 // Market data cache
-export const marketData = pgTable("market_data", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar("symbol", { length: 20 }).notNull(),
-  timeframe: varchar("timeframe", { length: 10 }).notNull(),
-  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
-  volume: decimal("volume", { precision: 18, scale: 8 }),
-  change24h: numeric("change_24h", { precision: 8, scale: 2 }),
-  high24h: decimal("high_24h", { precision: 18, scale: 8 }),
-  low24h: decimal("low_24h", { precision: 18, scale: 8 }),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
+export const marketData = pgTable(
+  "market_data",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    timeframe: varchar("timeframe", { length: 10 }).notNull(),
+    price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+    volume: decimal("volume", { precision: 18, scale: 8 }),
+    change24h: numeric("change_24h", { precision: 8, scale: 2 }),
+    high24h: decimal("high_24h", { precision: 18, scale: 8 }),
+    low24h: decimal("low_24h", { precision: 18, scale: 8 }),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    symbolTimeframeUniq: unique("market_data_symbol_timeframe_uniq").on(
+      table.symbol,
+      table.timeframe,
+    ),
+  }),
+);
 
 // Create insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({

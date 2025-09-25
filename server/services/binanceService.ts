@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { db } from "../db";
-import { tradingPairs } from "@shared/schema";
+import { sql } from "drizzle-orm";
 
 type ExchangeInfoSymbol = {
   symbol: string;
@@ -189,21 +189,39 @@ export class BinanceService {
           tickSize: tickSize ? String(tickSize) : null,
         } as any;
 
-        await db
-          .insert(tradingPairs)
-          .values(values)
-          .onConflictDoUpdate({
-            target: tradingPairs.symbol,
-            set: {
-              baseAsset: values.baseAsset,
-              quoteAsset: values.quoteAsset,
-              isActive: values.isActive,
-              minNotional: values.minNotional,
-              minQty: values.minQty,
-              stepSize: values.stepSize,
-              tickSize: values.tickSize,
-            },
-          });
+        await db.execute(
+          sql`
+            INSERT INTO public.trading_pairs (
+              symbol,
+              base_asset,
+              quote_asset,
+              is_active,
+              min_notional,
+              min_qty,
+              step_size,
+              tick_size
+            )
+            VALUES (
+              ${values.symbol},
+              ${values.baseAsset},
+              ${values.quoteAsset},
+              ${values.isActive},
+              ${values.minNotional},
+              ${values.minQty},
+              ${values.stepSize},
+              ${values.tickSize}
+            )
+            ON CONFLICT ON CONSTRAINT trading_pairs_symbol_uniq
+            DO UPDATE SET
+              base_asset = EXCLUDED.base_asset,
+              quote_asset = EXCLUDED.quote_asset,
+              is_active = EXCLUDED.is_active,
+              min_notional = EXCLUDED.min_notional,
+              min_qty = EXCLUDED.min_qty,
+              step_size = EXCLUDED.step_size,
+              tick_size = EXCLUDED.tick_size;
+          `,
+        );
       }
     } catch (error) {
       console.error("Error initializing trading pairs:", error);

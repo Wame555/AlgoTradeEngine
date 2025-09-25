@@ -101,15 +101,15 @@ BEGIN
       FROM pg_indexes
       WHERE schemaname = 'public'
         AND tablename = 'user_settings'
-        AND indexname = 'user_settings_user_id_unique'
+        AND indexname IN ('user_settings_user_id_unique', 'user_settings_user_id_uniq_idx', 'idx_user_settings_user_id')
     ) THEN
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE USING INDEX user_settings_user_id_unique';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE USING INDEX user_settings_user_id_unique';
     ELSE
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE (user_id)';
     END IF;
-  ELSIF v_unique_name <> 'user_settings_user_id_unique' THEN
+  ELSIF v_unique_name <> 'user_settings_user_id_uniq' THEN
     EXECUTE format(
-      'ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_unique',
+      'ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_uniq',
       v_unique_name
     );
   END IF;
@@ -124,7 +124,7 @@ BEGIN
   EXECUTE '
     INSERT INTO public.users (id, username, password)
     VALUES (gen_random_uuid(), $1, $2)
-    ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+    ON CONFLICT ON CONSTRAINT users_username_uniq DO UPDATE SET username = EXCLUDED.username
   ' USING v_default_username, v_default_password;
 
   EXECUTE '

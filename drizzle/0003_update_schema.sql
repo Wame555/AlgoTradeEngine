@@ -57,7 +57,7 @@ BEGIN
   IF default_user_id IS NULL THEN
     default_user_id := gen_random_uuid();
     INSERT INTO public."users" (id, username, password) VALUES (default_user_id, 'demo', 'demo')
-    ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
+    ON CONFLICT ON CONSTRAINT users_username_uniq DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
   END IF;
 
   UPDATE public."indicator_configs"
@@ -100,7 +100,7 @@ BEGIN
   IF default_user_id IS NULL THEN
     default_user_id := gen_random_uuid();
     INSERT INTO public."users" (id, username, password) VALUES (default_user_id, 'demo', 'demo')
-    ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
+    ON CONFLICT ON CONSTRAINT users_username_uniq DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
   END IF;
 
   SELECT EXISTS (

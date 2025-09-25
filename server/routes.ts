@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
 import {
@@ -52,11 +52,11 @@ type HealthIndexSpec =
     };
 
 const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
-  { type: "constraint", name: "user_settings_user_id_unique", table: "user_settings" },
+  { type: "constraint", name: "user_settings_user_id_uniq", table: "user_settings" },
   { type: "index", name: "idx_closed_positions_symbol_time", table: "closed_positions", columns: ["symbol", "closed_at"] },
   { type: "index", name: "idx_closed_positions_user", table: "closed_positions", columns: ["user_id"] },
-  { type: "index", name: "idx_indicator_configs_user_name", table: "indicator_configs", columns: ["user_id", "name"] },
-  { type: "index", name: "pair_timeframes_symbol_timeframe_unique", table: "pair_timeframes", columns: ["symbol", "timeframe"], unique: true },
+  { type: "constraint", name: "indicator_configs_user_id_name_uniq", table: "indicator_configs" },
+  { type: "constraint", name: "pair_timeframes_symbol_timeframe_uniq", table: "pair_timeframes" },
 ];
 
 function runUserSettingsGuard(): Promise<void> {
@@ -76,8 +76,8 @@ const DEFAULT_USER_SETTINGS = {
   defaultLeverage: 1,
   riskPercent: 2,
   demoEnabled: true,
-  defaultTpPct: 1,
-  defaultSlPct: 0.5,
+  defaultTpPct: "1.00",
+  defaultSlPct: "0.50",
 } as const;
 
 async function ensureDemoUserRecord(): Promise<User> {
@@ -130,20 +130,16 @@ async function ensureDemoUserRecord(): Promise<User> {
       }
     }
 
-    await tx
-      .insert(users)
-      .values({
-        id: DEMO_USER_ID,
-        username: DEFAULT_SESSION_USERNAME,
-        password: DEFAULT_SESSION_PASSWORD,
-      })
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          username: DEFAULT_SESSION_USERNAME,
-          password: DEFAULT_SESSION_PASSWORD,
-        },
-      });
+    await tx.execute(
+      sql`
+        INSERT INTO public.users (id, username, password)
+        VALUES (${DEMO_USER_ID}::uuid, ${DEFAULT_SESSION_USERNAME}, ${DEFAULT_SESSION_PASSWORD})
+        ON CONFLICT ON CONSTRAINT users_pkey
+        DO UPDATE SET
+          username = EXCLUDED.username,
+          password = EXCLUDED.password;
+      `,
+    );
 
     const [user] = await tx.select().from(users).where(eq(users.id, DEMO_USER_ID)).limit(1);
 
