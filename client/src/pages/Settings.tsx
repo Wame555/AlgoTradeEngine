@@ -49,7 +49,7 @@ export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { session } = useSession();
-  const userId = session?.user.id ?? "";
+  const userId = session?.userId ?? "";
   const [isPatchDialogOpen, setIsPatchDialogOpen] = useState(false);
   const [patchValues, setPatchValues] = useState({ initialBalance: "", feesMultiplier: "" });
 

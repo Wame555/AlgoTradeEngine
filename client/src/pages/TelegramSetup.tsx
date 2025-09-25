@@ -29,7 +29,7 @@ export default function TelegramSetup() {
   const queryClient = useQueryClient();
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const { session } = useSession();
-  const userId = session?.user.id;
+  const userId = session?.userId;
 
   const form = useForm<TelegramForm>({
     resolver: zodResolver(telegramFormSchema),

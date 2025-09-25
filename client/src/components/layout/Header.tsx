@@ -16,7 +16,7 @@ export function Header({ isConnected }: HeaderProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { session } = useSession();
-  const userId = session?.user.id;
+  const userId = session?.userId;
 
   const { data: account } = useAccount();
   const { data: tradingPairs } = useTradingPairs();
