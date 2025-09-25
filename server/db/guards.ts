@@ -17,6 +17,13 @@ DECLARE
     v_has_tf BOOLEAN;
     v_has_timeframe BOOLEAN;
     v_has_null BOOLEAN;
+    v_has_closed_symbol_time BOOLEAN;
+    v_has_closed_user BOOLEAN;
+    v_has_indicator_index BOOLEAN;
+    v_existing_constraint TEXT;
+    v_matching_index TEXT;
+    v_canonical_index TEXT := 'user_settings_user_id_unique';
+    v_canonical_regclass REGCLASS;
     rows_deleted INTEGER := 0;
     rows_updated INTEGER := 0;
     col_rec RECORD;
@@ -33,26 +40,53 @@ BEGIN
         IF NOT v_exists THEN
             RAISE NOTICE '[ensureSchema] table public.closed_positions missing, skipping closed_positions guards.';
         ELSE
-            IF to_regclass('public.idx_closed_positions_symbol_time') IS NOT NULL THEN
-                RAISE NOTICE '[ensureSchema] dropping index public.idx_closed_positions_symbol_time for canonical rebuild.';
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_class i
+                JOIN pg_namespace n ON n.oid = i.relnamespace
+                JOIN pg_index ix ON ix.indexrelid = i.oid
+                JOIN pg_class t ON t.oid = ix.indrelid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = 'public'
+                  AND t.relname = 'closed_positions'
+                  AND i.relname = 'idx_closed_positions_symbol_time'
+                  AND ix.indpred IS NULL
+                GROUP BY i.relname
+                HAVING array_agg(lower(a.attname) ORDER BY k.ordinality) = ARRAY['symbol', 'closed_at']
+            ) INTO v_has_closed_symbol_time;
+
+            IF NOT v_has_closed_symbol_time THEN
+                RAISE NOTICE '[ensureSchema] rebuilding index public.idx_closed_positions_symbol_time';
                 EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, closed_at)';
             ELSE
-                RAISE NOTICE '[ensureSchema] index public.idx_closed_positions_symbol_time already absent, drop skipped.';
+                RAISE NOTICE '[ensureSchema] index public.idx_closed_positions_symbol_time already canonical';
             END IF;
 
-            IF to_regclass('public.idx_closed_positions_symbol_time') IS NULL THEN
-                RAISE NOTICE '[ensureSchema] creating index public.idx_closed_positions_symbol_time';
-            ELSE
-                RAISE NOTICE '[ensureSchema] index public.idx_closed_positions_symbol_time already present before create, keeping definition.';
-            END IF;
-            EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_class i
+                JOIN pg_namespace n ON n.oid = i.relnamespace
+                JOIN pg_index ix ON ix.indexrelid = i.oid
+                JOIN pg_class t ON t.oid = ix.indrelid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = 'public'
+                  AND t.relname = 'closed_positions'
+                  AND i.relname = 'idx_closed_positions_user'
+                  AND ix.indpred IS NULL
+                GROUP BY i.relname
+                HAVING array_agg(lower(a.attname) ORDER BY k.ordinality) = ARRAY['user_id']
+            ) INTO v_has_closed_user;
 
-            IF to_regclass('public.idx_closed_positions_user') IS NULL THEN
-                RAISE NOTICE '[ensureSchema] creating index public.idx_closed_positions_user';
+            IF NOT v_has_closed_user THEN
+                RAISE NOTICE '[ensureSchema] rebuilding index public.idx_closed_positions_user';
+                EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_user';
+                EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user ON public.closed_positions(user_id)';
             ELSE
-                RAISE NOTICE '[ensureSchema] index public.idx_closed_positions_user already exists';
+                RAISE NOTICE '[ensureSchema] index public.idx_closed_positions_user already canonical';
             END IF;
-            EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user ON public.closed_positions("userId")';
         END IF;
     EXCEPTION WHEN OTHERS THEN
         RAISE NOTICE '[ensureSchema] closed_positions guard failed: %', SQLERRM;
@@ -70,12 +104,30 @@ BEGIN
         IF NOT v_exists THEN
             RAISE NOTICE '[ensureSchema] table public.indicator_configs missing, skipping indicator_configs guards.';
         ELSE
-            IF to_regclass('public.idx_indicator_configs_user_name') IS NULL THEN
-                RAISE NOTICE '[ensureSchema] creating index public.idx_indicator_configs_user_name';
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_class i
+                JOIN pg_namespace n ON n.oid = i.relnamespace
+                JOIN pg_index ix ON ix.indexrelid = i.oid
+                JOIN pg_class t ON t.oid = ix.indrelid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = 'public'
+                  AND t.relname = 'indicator_configs'
+                  AND i.relname = 'idx_indicator_configs_user_name'
+                  AND ix.indisunique
+                  AND ix.indpred IS NULL
+                GROUP BY i.relname
+                HAVING array_agg(lower(a.attname) ORDER BY k.ordinality) = ARRAY['user_id', 'name']
+            ) INTO v_has_indicator_index;
+
+            IF NOT v_has_indicator_index THEN
+                RAISE NOTICE '[ensureSchema] rebuilding index public.idx_indicator_configs_user_name';
+                EXECUTE 'DROP INDEX IF EXISTS public.idx_indicator_configs_user_name';
+                EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS public.idx_indicator_configs_user_name ON public.indicator_configs(user_id, name)';
             ELSE
-                RAISE NOTICE '[ensureSchema] index public.idx_indicator_configs_user_name already exists';
+                RAISE NOTICE '[ensureSchema] index public.idx_indicator_configs_user_name already canonical';
             END IF;
-            EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_indicator_configs_user_name ON public.indicator_configs("userId","name")';
 
             IF EXISTS (
                 SELECT 1
@@ -259,12 +311,89 @@ BEGIN
             GET DIAGNOSTICS rows_deleted = ROW_COUNT;
             RAISE NOTICE '[ensureSchema] removed % duplicate user_settings rows', rows_deleted;
 
-            IF to_regclass('public.user_settings_user_id_unique') IS NULL THEN
-                RAISE NOTICE '[ensureSchema] creating unique index public.user_settings_user_id_unique';
+            SELECT tc.constraint_name
+            INTO v_existing_constraint
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = 'user_settings'
+              AND tc.constraint_type = 'UNIQUE'
+              AND kcu.column_name = 'user_id'
+            LIMIT 1;
+
+            IF v_existing_constraint IS NOT NULL THEN
+                IF v_existing_constraint <> v_canonical_index THEN
+                    BEGIN
+                        RAISE NOTICE '[ensureSchema] renaming constraint % to %', v_existing_constraint, v_canonical_index;
+                        EXECUTE format(
+                            'ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO %I',
+                            v_existing_constraint,
+                            v_canonical_index
+                        );
+                    EXCEPTION
+                        WHEN duplicate_object THEN
+                            RAISE NOTICE '[ensureSchema] duplicate when renaming constraint %, skipping', v_existing_constraint;
+                    END;
+                ELSE
+                    RAISE NOTICE '[ensureSchema] constraint % already canonical', v_canonical_index;
+                END IF;
             ELSE
-                RAISE NOTICE '[ensureSchema] unique index public.user_settings_user_id_unique already exists';
+                SELECT i.relname
+                INTO v_matching_index
+                FROM pg_class t
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+                JOIN pg_index ix ON ix.indrelid = t.oid
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = 'public'
+                  AND t.relname = 'user_settings'
+                  AND ix.indisunique
+                  AND ix.indpred IS NULL
+                GROUP BY i.relname
+                HAVING array_agg(lower(a.attname) ORDER BY k.ordinality) = ARRAY['user_id']
+                LIMIT 1;
+
+                IF v_matching_index IS NULL THEN
+                    v_matching_index := 'user_settings_user_id_unique_idx';
+                    RAISE NOTICE '[ensureSchema] creating fallback index %', v_matching_index;
+                    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS user_settings_user_id_unique_idx ON public.user_settings(user_id)';
+                ELSE
+                    RAISE NOTICE '[ensureSchema] attaching constraint using existing index %', v_matching_index;
+                END IF;
+
+                BEGIN
+                    EXECUTE format(
+                        'ALTER TABLE public.user_settings ADD CONSTRAINT %I UNIQUE USING INDEX %I',
+                        v_canonical_index,
+                        v_matching_index
+                    );
+                EXCEPTION
+                    WHEN duplicate_object THEN
+                        RAISE NOTICE '[ensureSchema] constraint % already exists, skipping attach', v_canonical_index;
+                END;
+
+                SELECT to_regclass('public.' || v_canonical_index)
+                INTO v_canonical_regclass;
+
+                IF v_canonical_regclass IS NULL AND v_matching_index <> v_canonical_index THEN
+                    BEGIN
+                        RAISE NOTICE '[ensureSchema] renaming index % to %', v_matching_index, v_canonical_index;
+                        EXECUTE format(
+                            'ALTER INDEX public.%I RENAME TO %I',
+                            v_matching_index,
+                            v_canonical_index
+                        );
+                    EXCEPTION
+                        WHEN duplicate_object THEN
+                            RAISE NOTICE '[ensureSchema] duplicate when renaming index %, skipping', v_matching_index;
+                    END;
+                ELSE
+                    RAISE NOTICE '[ensureSchema] index % already canonical', v_canonical_index;
+                END IF;
             END IF;
-            EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS public.user_settings_user_id_unique ON public.user_settings(user_id)';
         END IF;
     EXCEPTION WHEN OTHERS THEN
         RAISE NOTICE '[ensureSchema] user_settings guard failed: %', SQLERRM;

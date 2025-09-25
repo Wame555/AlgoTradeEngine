@@ -59,23 +59,12 @@ async function sanitizeFile(filePath: string, fileName: string): Promise<void> {
   }
 
   const changeSummary: ChangeSummary[] = [];
-  let content = original;
-
-  const statementResult = removeStatementBreakpoints(content);
-  if (statementResult.removed > 0) {
-    content = statementResult.content;
-    changeSummary.push({
-      description: "removed statement-breakpoint markers",
-      count: statementResult.removed,
-    });
-  }
-
-  const normalizationResult = normalizeIndexStatements(content);
-  content = normalizationResult.content;
-  if (normalizationResult.updated > 0) {
+  const normalizationResult = normalizeIndexStatements(original);
+  const { content, updated } = normalizationResult;
+  if (updated > 0) {
     changeSummary.push({
       description: "normalized index statements",
-      count: normalizationResult.updated,
+      count: updated,
     });
   }
 
@@ -96,18 +85,6 @@ async function sanitizeFile(filePath: string, fileName: string): Promise<void> {
     const details = changeSummary.map((change) => `${change.description} (${change.count})`).join(", ");
     console.warn(`[autoheal] ${fileName}: ${details} -> total ${total} adjustment(s)`);
   }
-}
-
-function removeStatementBreakpoints(content: string): { content: string; removed: number } {
-  const lines = content.split(/\r?\n/);
-  const filtered = lines.filter(
-    (line) => !line.trim().startsWith("-->") || !line.includes("statement-breakpoint"),
-  );
-  const removed = lines.length - filtered.length;
-  return {
-    content: filtered.join("\n"),
-    removed,
-  };
 }
 
 function normalizeIndexStatements(content: string): { content: string; updated: number } {
