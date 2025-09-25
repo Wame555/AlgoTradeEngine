@@ -2,7 +2,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express, { type Request, type Response, type NextFunction } from "express";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -20,8 +20,35 @@ import { setLastPrice } from "./paper/PriceFeed";
 import { db, pool } from "./db";
 import { ensureSchema } from "./db/guards";
 
+const requestLogger: RequestHandler = (req, res, next) => {
+    const startedAt = Date.now();
+    res.on("finish", () => {
+        const durationMs = Date.now() - startedAt;
+        const status = res.statusCode;
+        const method = req.method;
+        const url = req.originalUrl;
+        console.log(
+            `[${new Date().toISOString()}] ${method} ${url} -> ${status} (${durationMs}ms)`,
+        );
+    });
+    next();
+};
+
+const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+    const message = err instanceof Error && err.message ? err.message : "Internal Server Error";
+    const payload: Record<string, unknown> = { error: true, message };
+
+    if (err && typeof err === "object" && "details" in err && err.details != null) {
+        payload.details = (err as { details: unknown }).details;
+    }
+
+    console.error(`[error] ${req.method} ${req.originalUrl}`, err);
+    res.status(500).json(payload);
+};
+
 // --- Express app + HTTP szerver ---
 const app = express();
+app.use(requestLogger);
 app.use(express.json());
 
 const httpServer = createServer(app);
@@ -60,7 +87,7 @@ wss.on("connection", (ws) => {
     }
 
     const migrationsFolder = path.resolve(
-        fileURLToPath(new URL("../drizzle", import.meta.url))
+        fileURLToPath(new URL("../drizzle", import.meta.url)),
     );
     try {
         await migrate(db, { migrationsFolder });
@@ -106,13 +133,7 @@ wss.on("connection", (ws) => {
         broadcast,
     });
 
-    // Hiba middleware
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-        const status = err.status || err.statusCode || 500;
-        const message = err.message || "Internal Server Error";
-        res.status(status).json({ message });
-        console.error("Unhandled error:", err);
-    });
+    app.use(globalErrorHandler);
 
     // Vite dev/production kiszolgálás
     if (app.get("env") === "development") {
@@ -130,7 +151,7 @@ wss.on("connection", (ws) => {
         },
         () => {
             log(`serving on port ${PORT}`);
-        }
+        },
     );
 })().catch((err) => {
     console.error("Fatal startup error:", err);
