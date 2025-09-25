@@ -2,7 +2,7 @@ DO $$
 DECLARE
   existing_constraint text;
   matching_index text;
-  canonical_index text := 'user_settings_user_id_unique';
+  canonical_index text := 'user_settings_user_id_uniq';
   canonical_regclass regclass;
 BEGIN
   IF to_regclass('public.user_settings') IS NULL THEN
@@ -55,8 +55,8 @@ BEGIN
   LIMIT 1;
 
   IF matching_index IS NULL THEN
-    matching_index := 'user_settings_user_id_unique_idx';
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS user_settings_user_id_unique_idx ON public.user_settings(user_id)';
+    matching_index := 'user_settings_user_id_uniq_idx';
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS user_settings_user_id_uniq_idx ON public.user_settings(user_id)';
   END IF;
 
   BEGIN

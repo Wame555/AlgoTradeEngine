@@ -61,7 +61,7 @@ export const userSettings = pgTable(
     updatedAt: timestamp("updated_at").defaultNow(),
   },
   (table) => ({
-    userIdUnique: unique("user_settings_user_id_unique").on(table.userId),
+    userIdUnique: unique("user_settings_user_id_uniq").on(table.userId),
   }),
 );
 
