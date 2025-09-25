@@ -241,14 +241,14 @@ BEGIN
       FROM pg_indexes
       WHERE schemaname = 'public'
         AND tablename = 'user_settings'
-        AND indexname = 'user_settings_user_id_unique'
+        AND indexname = 'user_settings_user_id_uniq'
     ) THEN
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE USING INDEX user_settings_user_id_unique';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE USING INDEX user_settings_user_id_uniq';
     ELSE
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE (user_id)';
     END IF;
-  ELSIF unique_name <> 'user_settings_user_id_unique' THEN
-    EXECUTE format('ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_unique', unique_name);
+  ELSIF unique_name <> 'user_settings_user_id_uniq' THEN
+    EXECUTE format('ALTER TABLE public.user_settings RENAME CONSTRAINT %I TO user_settings_user_id_uniq', unique_name);
   END IF;
 
   SELECT rc.constraint_name,

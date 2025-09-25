@@ -508,7 +508,7 @@ async function ensureUserSettingsTable(client: PgClient): Promise<void> {
 
   await ensureUniqueConstraint(client, {
     table: "user_settings",
-    name: "user_settings_user_id_unique",
+    name: "user_settings_user_id_uniq",
     columns: ["user_id"],
   });
 }
@@ -725,7 +725,7 @@ async function ensureDemoUser(client: PgClient): Promise<void> {
           default_sl_pct
         )
         VALUES (gen_random_uuid(), $1::uuid, true, 1, 2, true, '1.00', '0.50')
-        ON CONFLICT ON CONSTRAINT user_settings_user_id_unique DO NOTHING;
+        ON CONFLICT ON CONSTRAINT user_settings_user_id_uniq DO NOTHING;
       `,
       [DEMO_USER_ID],
     );

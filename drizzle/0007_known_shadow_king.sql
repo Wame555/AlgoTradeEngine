@@ -1,7 +1,7 @@
 DO $$
 DECLARE
-  canonical_constraint text := 'user_settings_user_id_unique';
-  rename_target text := 'user_settings_user_id_unique_idx';
+  canonical_constraint text := 'user_settings_user_id_uniq';
+  rename_target text := 'user_settings_user_id_uniq_idx';
   existing_constraint text;
   constraint_exists boolean;
   index_name text;
@@ -163,7 +163,7 @@ BEGIN
     END;
   ELSE
     BEGIN
-      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_unique UNIQUE (user_id)';
+      EXECUTE 'ALTER TABLE public.user_settings ADD CONSTRAINT user_settings_user_id_uniq UNIQUE (user_id)';
     EXCEPTION
       WHEN duplicate_object THEN
         NULL;

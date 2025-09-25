@@ -52,7 +52,7 @@ type HealthIndexSpec =
     };
 
 const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
-  { type: "constraint", name: "user_settings_user_id_unique", table: "user_settings" },
+  { type: "constraint", name: "user_settings_user_id_uniq", table: "user_settings" },
   { type: "index", name: "idx_closed_positions_symbol_time", table: "closed_positions", columns: ["symbol", "closed_at"] },
   { type: "index", name: "idx_closed_positions_user", table: "closed_positions", columns: ["user_id"] },
   { type: "index", name: "idx_indicator_configs_user_name", table: "indicator_configs", columns: ["user_id", "name"] },

@@ -210,7 +210,7 @@ export class DatabaseStorage implements IStorage {
         sql`
           INSERT INTO public.user_settings (${insertColumnsSql})
           VALUES (${insertValuesSql})
-          ON CONFLICT ON CONSTRAINT user_settings_user_id_unique
+          ON CONFLICT ON CONSTRAINT user_settings_user_id_uniq
           DO UPDATE SET ${updateSetSql}
           RETURNING *;
         `,

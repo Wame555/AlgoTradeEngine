@@ -5,5 +5,14 @@ WHERE a.ctid < b.ctid
   AND a.user_id = b.user_id;
 
 -- Enforce unique user_id values for user settings
-ALTER TABLE "user_settings"
-  ADD CONSTRAINT "user_settings_user_id_unique" UNIQUE ("user_id");
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'user_settings_user_id_uniq'
+  ) THEN
+    ALTER TABLE "user_settings"
+      ADD CONSTRAINT "user_settings_user_id_uniq" UNIQUE ("user_id");
+  END IF;
+END $$;
