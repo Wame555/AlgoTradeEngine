@@ -1,9 +1,10 @@
 import type { Express, Response } from "express";
 import type { Broker } from "./broker/types";
+import type { DatabaseError } from "pg";
 import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { and, desc, eq } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
@@ -21,11 +22,26 @@ import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
 import { getLastPrice } from "./paper/PriceFeed";
 import { logError } from "./utils/logger";
+import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
 const SESSION_TIMEOUT_MS = 5000;
 const SESSION_TIMEOUT_MESSAGE = `Session initialisation timed out after ${SESSION_TIMEOUT_MS}ms`;
+
+let userSettingsGuardPromise: Promise<void> | null = null;
+
+function runUserSettingsGuard(): Promise<void> {
+  if (!userSettingsGuardPromise) {
+    userSettingsGuardPromise = ensureUserSettingsGuard(pool).catch((error) => {
+      console.error("[userSettingsGuard] failed to self-heal user_settings table", error);
+      throw error;
+    });
+  }
+  return userSettingsGuardPromise;
+}
+
+const userSettingsGuardBootstrap = runUserSettingsGuard();
 
 async function ensureDefaultUser() {
   let user = await storage.getUserByUsername(DEFAULT_SESSION_USERNAME);
@@ -323,6 +339,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.get("/api/session", async (_req, res) => {
     try {
+      await userSettingsGuardBootstrap;
       const { user, settings } = await withTimeout(
         ensureDefaultUser(),
         SESSION_TIMEOUT_MS,
@@ -335,7 +352,30 @@ export function registerRoutes(app: Express, deps: Deps): void {
         serverTime: new Date().toISOString(),
       });
     } catch (error) {
-      return respondWithError(res, "GET /api/session", error, "Failed to initialise session");
+      const pgError = error as DatabaseError | undefined;
+      if (pgError && typeof pgError === "object" && "code" in pgError) {
+        console.error("[session] failed to initialise session", {
+          message: pgError.message,
+          code: pgError.code,
+          constraint: pgError.constraint,
+          detail: (pgError as { detail?: unknown }).detail,
+        });
+        void logError("GET /api/session", {
+          message: pgError.message,
+          code: pgError.code,
+          constraint: pgError.constraint,
+          detail: (pgError as { detail?: unknown }).detail,
+        });
+      } else {
+        console.error("[session] failed to initialise session", error);
+        void logError("GET /api/session", error);
+      }
+
+      return res.status(500).json({
+        error: true,
+        message: "Failed to initialise session",
+        hint: "Database schema mismatch detected. Please run migrations.",
+      });
     }
   });
 
