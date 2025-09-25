@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import { bulkUpsertCandles, type MarketDataUpsert } from "../db/marketData";
 import { BackfillTimeframes } from "./backfill";
 import { getLastPrice, setLastPrice, setPrevClose } from "../state/marketCache";
+import { CONFIGURED_SYMBOLS } from "../config/symbols";
 
 const WS_BASE_URL = "wss://fstream.binance.com/stream?streams=";
 const KEEPALIVE_INTERVAL_MS = 25_000;
@@ -23,14 +24,6 @@ type PendingCandle = {
   messageId: number;
 };
 
-function parseSymbolsFromEnv(): string[] {
-  const raw = process.env.SYMBOL_LIST ?? "";
-  return raw
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter((symbol) => symbol.length > 0);
-}
-
 function buildCombinedStreamUrl(symbols: string[]): { url: string; streams: number } {
   const segments: string[] = [];
 
@@ -49,7 +42,7 @@ function buildCombinedStreamUrl(symbols: string[]): { url: string; streams: numb
 }
 
 export function startLiveFuturesStream(): void {
-  const symbols = parseSymbolsFromEnv();
+  const symbols = [...CONFIGURED_SYMBOLS];
   if (symbols.length === 0) {
     console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
     return;
@@ -145,7 +138,7 @@ export function startLiveFuturesStream(): void {
     const attempt = reconnectAttempts + 1;
 
     if (delay >= MAX_BACKOFF_MS && reconnectAttempts > 0) {
-      console.error(`[live] ws reconnect delay maxed at ${MAX_BACKOFF_MS}ms (attempt ${attempt})`);
+      console.warn(`[live] ws reconnect delay maxed at ${MAX_BACKOFF_MS}ms (attempt ${attempt})`);
     } else {
       console.warn(`[live] ws reconnecting in ${delay}ms (attempt ${attempt})`);
     }

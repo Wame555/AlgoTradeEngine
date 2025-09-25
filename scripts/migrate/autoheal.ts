@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 type ChangeSummary = {
   description: string;
@@ -9,7 +10,7 @@ type ChangeSummary = {
 
 const DISABLE_AUTOHEAL = (process.env.AUTOHEAL_DISABLE ?? "").toLowerCase() === "true";
 
-async function main(): Promise<void> {
+export async function runAutoheal(): Promise<void> {
   if (DISABLE_AUTOHEAL) {
     console.warn("[autoheal] AUTOHEAL_DISABLE=true -> skipping file sanitization");
     return;
@@ -145,7 +146,22 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
-void main().catch((error) => {
-  console.error("[autoheal] unexpected failure", error);
-  process.exitCode = 1;
-});
+const invokedFromCli = (() => {
+  const entry = process.argv[1];
+  if (!entry) {
+    return false;
+  }
+  try {
+    const resolved = path.resolve(entry);
+    return pathToFileURL(resolved).href === import.meta.url;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedFromCli) {
+  void runAutoheal().catch((error) => {
+    console.error("[autoheal] unexpected failure", error);
+    process.exitCode = 1;
+  });
+}

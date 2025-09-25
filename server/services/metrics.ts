@@ -4,6 +4,7 @@ import {
   getPrevCloseFromCache,
   setPrevClose,
 } from "../state/marketCache";
+import { CONFIGURED_SYMBOL_SET } from "../config/symbols";
 
 import type { Position } from "@shared/schema";
 import { SUPPORTED_TIMEFRAMES, type SupportedTimeframe } from "@shared/types";
@@ -188,6 +189,9 @@ export async function aggregateYearly(symbol: string, year: number): Promise<Can
 
 export async function getPrevClose(symbol: string, timeframe: string): Promise<number> {
   const normalized = normalizeSymbol(symbol);
+  if (CONFIGURED_SYMBOL_SET.size > 0 && !CONFIGURED_SYMBOL_SET.has(normalized)) {
+    return 0;
+  }
   const cached = getPrevCloseFromCache(normalized, timeframe);
   if (typeof cached === "number") {
     return cached;
