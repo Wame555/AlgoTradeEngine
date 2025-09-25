@@ -46,6 +46,14 @@ const DEFAULT_INDICATOR_CONFIGS: Array<{ name: string; payload: Record<string, u
   { name: "FVG", payload: { lookback: 100, threshold: 0.0025 } },
 ];
 
+type UserSettingsInsert = typeof userSettings.$inferInsert;
+
+function pruneUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined),
+  ) as Partial<T>;
+}
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -156,14 +164,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings> {
+    const now = new Date();
+
+    const insertPayload = pruneUndefined(settings) as UserSettingsInsert;
+    const updatePayload = pruneUndefined({ ...settings }) as Partial<UserSettingsInsert>;
+    delete (updatePayload as Record<string, unknown>).userId;
+
     const [result] = await db
       .insert(userSettings)
-      .values(settings)
+      .values(insertPayload)
       .onConflictDoUpdate({
         target: userSettings.userId,
         set: {
-          ...settings,
-          updatedAt: new Date(),
+          ...updatePayload,
+          updatedAt: now,
         },
       })
       .returning();
