@@ -1,3 +1,6 @@
+import type { OpenPositionResponse, StatsChangeResponse, SupportedTimeframe } from '@shared/types';
+import { SUPPORTED_TIMEFRAMES as SHARED_SUPPORTED_TIMEFRAMES } from '@shared/types';
+
 export interface TradingPair {
   id: string;
   symbol: string;
@@ -17,23 +20,7 @@ export interface PairTimeframe {
   createdAt: string;
 }
 
-export interface Position {
-  id: string;
-  userId: string;
-  symbol: string;
-  side: 'LONG' | 'SHORT';
-  size: string;
-  entryPrice: string;
-  currentPrice?: string;
-  pnl?: string;
-  stopLoss?: string;
-  takeProfit?: string;
-  trailingStopPercent?: number;
-  status: string;
-  orderId?: string;
-  openedAt: string;
-  closedAt?: string;
-}
+export type Position = OpenPositionResponse;
 
 export interface ClosedPositionSummary {
   id: string;
@@ -130,6 +117,8 @@ export interface StatsSummary {
   last30dPnl: number;
 }
 
+export type StatsChange = StatsChangeResponse;
+
 export interface PriceUpdate {
   symbol: string;
   price: string;
@@ -145,4 +134,6 @@ export interface WebSocketMessage {
   userId?: string;
 }
 
-export const SUPPORTED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
+export type { SupportedTimeframe };
+
+export const SUPPORTED_TIMEFRAMES = SHARED_SUPPORTED_TIMEFRAMES;
