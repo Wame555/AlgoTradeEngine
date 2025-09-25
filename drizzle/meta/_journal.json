@@ -70,6 +70,13 @@
       "when": 1758813485272,
       "tag": "0009_fix_user_settings_user_id_uuid",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1758828286211,
+      "tag": "0010_bumpy_hellfire_club",
+      "breakpoints": true
     }
   ]
 }
