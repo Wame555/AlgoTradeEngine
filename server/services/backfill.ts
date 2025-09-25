@@ -1,7 +1,7 @@
-import "dotenv/config";
-
 import { bulkUpsertMarketData, type MarketDataUpsert } from "../db/marketData";
 import { BinanceFuturesClient, type BinanceKline, type FuturesTimeframe } from "./binanceClient";
+import { CONFIGURED_SYMBOLS } from "../config/symbols";
+import { FUTURES } from "../../src/config/env";
 
 const TIMEFRAMES: FuturesTimeframe[] = ["1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"];
 const MIN_CANDLES = 400;
@@ -19,14 +19,6 @@ const timeframeToMs: Record<FuturesTimeframe, number> = {
   "1w": 7 * 24 * 60 * 60 * 1000,
   "1M": 30 * 24 * 60 * 60 * 1000,
 };
-
-function parseSymbolsFromEnv(): string[] {
-  const raw = process.env.SYMBOL_LIST ?? "";
-  return raw
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter((symbol) => symbol.length > 0);
-}
 
 function mapToMarketData(symbol: string, timeframe: FuturesTimeframe, kline: BinanceKline): MarketDataUpsert {
   return {
@@ -104,13 +96,13 @@ async function collectClosedKlines(
 }
 
 export async function runFuturesBackfill(): Promise<void> {
-  const futuresEnabled = (process.env.FUTURES ?? "false").toLowerCase() === "true";
+  const futuresEnabled = FUTURES;
   if (!futuresEnabled) {
     console.warn("[backfill] FUTURES flag is not true. Skipping futures backfill.");
     return;
   }
 
-  const symbols = parseSymbolsFromEnv();
+  const symbols = CONFIGURED_SYMBOLS;
   if (symbols.length === 0) {
     console.warn("[backfill] SYMBOL_LIST is empty. Skipping backfill.");
     return;

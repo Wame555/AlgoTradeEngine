@@ -2,7 +2,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express, { type ErrorRequestHandler, type RequestHandler } from "express";
+import express, { type RequestHandler } from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -23,9 +23,32 @@ import { runFuturesBackfill, BackfillTimeframes } from "./services/backfill";
 import { startLiveFuturesStream } from "./services/live";
 import { DEFAULT_TIMEFRAMES, initializeMetrics } from "./services/metrics";
 import { primePrevCloseCaches } from "./state/marketCache";
+import { configureLogging } from "./utils/logger";
+import { errorHandler } from "./middleware/errorHandler";
+import { CONFIGURED_SYMBOLS } from "./config/symbols";
+import { FUTURES, RUN_MIGRATIONS_ON_START } from "../src/config/env";
+import { runAutoheal } from "../scripts/migrate/autoheal";
 
+configureLogging();
+
+const environment = (process.env.NODE_ENV ?? "development").toLowerCase();
 const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
-const runMigrationsOnStart = (process.env.RUN_MIGRATIONS_ON_START ?? "false").toLowerCase() === "true";
+const configuredSymbols = [...CONFIGURED_SYMBOLS];
+const migrationsRequired = environment === "production";
+const shouldRunMigrations = RUN_MIGRATIONS_ON_START || migrationsRequired;
+
+console.info(`[startup] environment=${environment}`);
+console.info(
+    `[startup] RUN_MIGRATIONS_ON_START env=${RUN_MIGRATIONS_ON_START ? "true" : "false"} resolved=${
+        shouldRunMigrations ? "true" : "false"
+    }`,
+);
+console.info(`[startup] FUTURES=${FUTURES ? "true" : "false"}`);
+if (configuredSymbols.length === 0) {
+    console.warn("[startup] SYMBOL_LIST is empty. Stats endpoints will return fallback values.");
+} else {
+    console.info(`[startup] SYMBOL_LIST loaded (${configuredSymbols.length}): ${configuredSymbols.join(", ")}`);
+}
 
 const requestLogger: RequestHandler = (req, res, next) => {
     if (!shouldLogRequests) {
@@ -42,18 +65,6 @@ const requestLogger: RequestHandler = (req, res, next) => {
         console.warn(`[${new Date().toISOString()}] ${method} ${url} -> ${status} (${durationMs}ms)`);
     });
     next();
-};
-
-const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) => {
-    const message = err instanceof Error && err.message ? err.message : "Internal Server Error";
-    const payload: Record<string, unknown> = { error: true, message };
-
-    if (err && typeof err === "object" && "details" in err && err.details != null) {
-        payload.details = (err as { details: unknown }).details;
-    }
-
-    console.error(`[error] ${req.method} ${req.originalUrl}`, err);
-    res.status(500).json(payload);
 };
 
 // --- Express app + HTTP szerver ---
@@ -104,36 +115,50 @@ wss.on("connection", (ws) => {
 
     const migrationsFolder = path.resolve(fileURLToPath(new URL("../drizzle", import.meta.url)));
 
-    if (runMigrationsOnStart) {
+    if (shouldRunMigrations) {
         try {
             await migrate(db, { migrationsFolder });
             log("database migrations complete", "migrator");
         } catch (migrationError) {
-            console.error("Database migration failed:", migrationError);
-            process.exit(1);
-        }
-
-        try {
-            await runFuturesBackfill();
-        } catch (backfillError) {
-            console.warn("[backfill] Startup backfill encountered an error", backfillError);
+            console.error("[startup] database migration failed", migrationError);
+            if (migrationsRequired) {
+                process.exit(1);
+            }
         }
     } else {
-        console.info("[startup] RUN_MIGRATIONS_ON_START flag is false. Skipping migrations/backfill.");
+        console.info("[startup] migrations disabled by configuration. Running autoheal only.");
     }
 
-    const parseSymbolsFromEnv = (): string[] => {
-        const raw = process.env.SYMBOL_LIST ?? "";
-        return raw
-            .split(",")
-            .map((symbol) => symbol.trim().toUpperCase())
-            .filter((symbol) => symbol.length > 0);
-    };
+    try {
+        await runAutoheal();
+    } catch (autohealError) {
+        const message = (autohealError as Error).message ?? autohealError;
+        if (migrationsRequired) {
+            console.error(`[startup] autoheal failed: ${message}`, autohealError);
+            process.exit(1);
+        } else {
+            console.warn(`[startup] autoheal failed: ${message}`);
+        }
+    }
 
-    const futuresSymbols = parseSymbolsFromEnv();
+    if (shouldRunMigrations) {
+        if (!FUTURES) {
+            console.info("[backfill] FUTURES flag disabled. Skipping startup backfill.");
+        } else if (configuredSymbols.length === 0) {
+            console.warn("[backfill] Skipping startup backfill because SYMBOL_LIST is empty.");
+        } else {
+            try {
+                await runFuturesBackfill();
+            } catch (backfillError) {
+                console.warn("[backfill] Startup backfill encountered an error", backfillError);
+            }
+        }
+    }
+
+    const futuresSymbols = configuredSymbols;
     initializeMetrics(futuresSymbols, DEFAULT_TIMEFRAMES);
 
-    const futuresEnabled = (process.env.FUTURES ?? "false").toLowerCase() === "true";
+    const futuresEnabled = FUTURES;
     if (futuresEnabled) {
         if (futuresSymbols.length === 0) {
             console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
@@ -192,7 +217,7 @@ wss.on("connection", (ws) => {
         broadcast,
     });
 
-    app.use(globalErrorHandler);
+    app.use(errorHandler);
 
     // Vite dev/production kiszolgálás
     if (app.get("env") === "development") {

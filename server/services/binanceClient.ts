@@ -3,6 +3,7 @@ import "dotenv/config";
 const BASE_URL = "https://fapi.binance.com";
 
 const RETRY_DELAYS_MS = [250, 500, 1000] as const;
+const MAX_ATTEMPTS = 3;
 
 export type FuturesTimeframe =
   | "1m"
@@ -74,7 +75,9 @@ export class BinanceFuturesClient {
 
     const url = `${this.baseUrl}/fapi/v1/klines?${searchParams.toString()}`;
 
-    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    let lastUsedWeight: number | undefined;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -84,22 +87,23 @@ export class BinanceFuturesClient {
 
       const usedWeightHeader = response.headers.get("x-mbx-used-weight-1m");
       const usedWeight = usedWeightHeader ? Number(usedWeightHeader) : undefined;
+      if (typeof usedWeight === "number" && Number.isFinite(usedWeight)) {
+        lastUsedWeight = usedWeight;
+      }
 
       if (response.status === 429) {
-        if (attempt >= RETRY_DELAYS_MS.length) {
-          console.error(
-            `[backfill] Binance rate limit exceeded permanently for ${params.symbol} ${params.interval} (HTTP 429)`,
-          );
-          const text = await response.text();
-          throw new Error(`Binance rate limit exceeded: ${text}`);
-        }
-
-        const delay = RETRY_DELAYS_MS[attempt];
+        const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
         console.warn(
           `[backfill] Binance rate limit hit for ${params.symbol} ${params.interval}, retrying in ${delay}ms (attempt ${
             attempt + 1
           })`,
         );
+        if (attempt === MAX_ATTEMPTS - 1) {
+          console.warn(
+            `[backfill] Binance rate limit exhausted after ${MAX_ATTEMPTS} attempts for ${params.symbol} ${params.interval}. Skipping timeframe.`,
+          );
+          return { klines: [], usedWeight: lastUsedWeight };
+        }
         await sleep(delay);
         continue;
       }
@@ -115,6 +119,6 @@ export class BinanceFuturesClient {
       return { klines, usedWeight };
     }
 
-    return { klines: [] };
+    return { klines: [], usedWeight: lastUsedWeight };
   }
 }

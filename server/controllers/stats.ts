@@ -11,6 +11,7 @@ import {
 } from "@shared/types";
 import { getLastPrice } from "../state/marketCache";
 import { getPrevClose, getChangePct, getPnlForPosition } from "../services/metrics";
+import { CONFIGURED_SYMBOL_SET } from "../config/symbols";
 
 const TIMEFRAME_SET = new Set<SupportedTimeframe>(SUPPORTED_TIMEFRAMES);
 
@@ -49,6 +50,11 @@ export async function change(req: Request, res: Response): Promise<void> {
   const timeframe = rawTimeframe as SupportedTimeframe;
   const fallback = buildFallback(symbol, timeframe);
   const cacheKey = `stats:change:${symbol}:${timeframe}`;
+
+  if (CONFIGURED_SYMBOL_SET.size === 0 || !CONFIGURED_SYMBOL_SET.has(symbol)) {
+    res.json(fallback);
+    return;
+  }
 
   try {
     const { value, cacheHit } = await cached(cacheKey, DEFAULT_CACHE_TTL_MS, async () => {
