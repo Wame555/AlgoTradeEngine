@@ -5,6 +5,7 @@ import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
 import { db, pool } from "./db";
+import { cached, DEFAULT_CACHE_TTL_MS } from "./cache/apiCache";
 import { and, desc, eq } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
@@ -28,6 +29,9 @@ import type { IndicatorService } from "./services/indicatorService";
 import { getLastPrice } from "./paper/PriceFeed";
 import { logError } from "./utils/logger";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
+import * as statsController from "./controllers/stats";
+import { getChangePct, getPnlByTimeframes } from "./services/metrics";
+import { SUPPORTED_TIMEFRAMES, type OpenPositionResponse, type SupportedTimeframe } from "@shared/types";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
@@ -415,6 +419,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
     return res.status(200).json({ ok: true });
   });
 
+  app.get("/stats/change", statsController.change);
+
   const calculateSignalForPair = async (symbol: string, timeframe: string) => {
     const klines = await binanceService.getKlines(symbol, timeframe, 200);
     if (!Array.isArray(klines) || klines.length === 0) {
@@ -794,7 +800,78 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/positions/open", async (req, res) => {
     try {
       const userId = await resolveUserId(req.query.userId);
-      const positions = await storage.getOpenPositions(userId);
+      const { value: positions } = await cached<OpenPositionResponse[]>(
+        "positions:open",
+        DEFAULT_CACHE_TTL_MS,
+        async () => {
+          const basePositions = await storage.getOpenPositions(userId);
+
+          const enriched = await Promise.all(
+            basePositions.map(async (position) => {
+              const changePctByTimeframe = {} as Record<SupportedTimeframe, number>;
+              for (const frame of SUPPORTED_TIMEFRAMES) {
+                changePctByTimeframe[frame] = 0;
+              }
+
+              await Promise.all(
+                SUPPORTED_TIMEFRAMES.map(async (frame) => {
+                  try {
+                    const value = await getChangePct(position.symbol, frame);
+                    if (Number.isFinite(value)) {
+                      changePctByTimeframe[frame] = value;
+                    }
+                  } catch {
+                    changePctByTimeframe[frame] = 0;
+                  }
+                }),
+              );
+
+              const pnlRaw = await getPnlByTimeframes(position, SUPPORTED_TIMEFRAMES);
+              const pnlByTimeframe = {} as Record<SupportedTimeframe, number>;
+              for (const frame of SUPPORTED_TIMEFRAMES) {
+                const value = pnlRaw[frame];
+                pnlByTimeframe[frame] = Number.isFinite(value) ? value : 0;
+              }
+
+              const normalized: OpenPositionResponse = {
+                id: String(position.id),
+                userId: String(position.userId),
+                symbol: position.symbol,
+                side: position.side as 'LONG' | 'SHORT',
+                size: position.size != null ? String(position.size) : '0',
+                entryPrice: position.entryPrice != null ? String(position.entryPrice) : '0',
+                currentPrice: position.currentPrice != null ? String(position.currentPrice) : undefined,
+                pnl: position.pnl != null ? String(position.pnl) : undefined,
+                stopLoss: position.stopLoss != null ? String(position.stopLoss) : undefined,
+                takeProfit: position.takeProfit != null ? String(position.takeProfit) : undefined,
+                trailingStopPercent:
+                  position.trailingStopPercent != null ? Number(position.trailingStopPercent) : undefined,
+                status: position.status ?? '',
+                orderId: position.orderId != null ? String(position.orderId) : undefined,
+                openedAt:
+                  position.openedAt instanceof Date
+                    ? position.openedAt.toISOString()
+                    : position.openedAt != null
+                    ? String(position.openedAt)
+                    : new Date().toISOString(),
+                closedAt:
+                  position.closedAt instanceof Date
+                    ? position.closedAt.toISOString()
+                    : position.closedAt != null
+                    ? String(position.closedAt)
+                    : undefined,
+                changePctByTimeframe,
+                pnlByTimeframe,
+              };
+
+              return normalized;
+            }),
+          );
+
+          return enriched;
+        },
+      );
+
       res.json(positions);
     } catch (error) {
       respondWithError(res, "GET /api/positions/open", error, "Failed to fetch open positions");

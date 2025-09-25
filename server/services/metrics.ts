@@ -6,21 +6,11 @@ import {
 } from "../state/marketCache";
 
 import type { Position } from "@shared/schema";
+import { SUPPORTED_TIMEFRAMES, type SupportedTimeframe } from "@shared/types";
 
-const DEFAULT_TIMEFRAMES = [
-  "1m",
-  "3m",
-  "5m",
-  "15m",
-  "1h",
-  "4h",
-  "1d",
-  "1w",
-  "1M",
-  "1y",
-] as const;
+const DEFAULT_TIMEFRAMES = SUPPORTED_TIMEFRAMES;
 
-type Timeframe = (typeof DEFAULT_TIMEFRAMES)[number];
+type Timeframe = SupportedTimeframe;
 
 export interface Candle {
   symbol: string;
