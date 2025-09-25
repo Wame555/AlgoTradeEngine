@@ -17,7 +17,8 @@ import { BinanceService } from "./services/binanceService";
 import { TelegramService } from "./services/telegramService";
 import { IndicatorService } from "./services/indicatorService";
 import { setLastPrice } from "./paper/PriceFeed";
-import { db } from "./db";
+import { db, pool } from "./db";
+import { ensureSchema } from "./db/guards";
 
 // --- Express app + HTTP szerver ---
 const app = express();
@@ -51,6 +52,12 @@ wss.on("connection", (ws) => {
 // --- Indítási folyamat ---
 (async () => {
     const PORT = Number(process.env.PORT || 5000);
+
+    try {
+        await ensureSchema(pool);
+    } catch (schemaError) {
+        console.error("[ensureSchema] unexpected error", schemaError);
+    }
 
     const migrationsFolder = path.resolve(
         fileURLToPath(new URL("../drizzle", import.meta.url))
