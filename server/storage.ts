@@ -516,10 +516,7 @@ export class DatabaseStorage implements IStorage {
       .values(data as any)
       .onConflictDoUpdate({
         target: [marketData.symbol, marketData.timeframe],
-        set: {
-          ...data,
-          updatedAt: new Date(),
-        },
+        set: data as any,
       });
   }
 }

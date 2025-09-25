@@ -19,7 +19,9 @@ import { IndicatorService } from "./services/indicatorService";
 import { setLastPrice } from "./paper/PriceFeed";
 import { db, pool } from "./db";
 import { ensureSchema } from "./db/guards";
-import { runFuturesBackfill } from "./services/backfill";
+import { runFuturesBackfill, BackfillTimeframes } from "./services/backfill";
+import { startLiveFuturesStream } from "./services/live";
+import { primePrevCloseCaches } from "./state/marketCache";
 
 const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
 const runMigrationsOnStart = (process.env.RUN_MIGRATIONS_ON_START ?? "false").toLowerCase() === "true";
@@ -117,6 +119,39 @@ wss.on("connection", (ws) => {
         }
     } else {
         console.info("[startup] RUN_MIGRATIONS_ON_START flag is false. Skipping migrations/backfill.");
+    }
+
+    const parseSymbolsFromEnv = (): string[] => {
+        const raw = process.env.SYMBOL_LIST ?? "";
+        return raw
+            .split(",")
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter((symbol) => symbol.length > 0);
+    };
+
+    const futuresEnabled = (process.env.FUTURES ?? "false").toLowerCase() === "true";
+    if (futuresEnabled) {
+        const futuresSymbols = parseSymbolsFromEnv();
+
+        if (futuresSymbols.length === 0) {
+            console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
+        } else {
+            try {
+                const primedCounts = await primePrevCloseCaches(futuresSymbols, BackfillTimeframes);
+                for (const timeframe of BackfillTimeframes) {
+                    const primed = primedCounts[timeframe] ?? 0;
+                    console.info(`[live] prevClose cache primed ${timeframe}:${primed}`);
+                }
+            } catch (cacheError) {
+                console.warn(
+                    `[live] failed to prime prevClose caches: ${(cacheError as Error).message ?? cacheError}`,
+                );
+            }
+
+            startLiveFuturesStream();
+        }
+    } else {
+        console.info("[live] FUTURES flag is false. Skipping futures live stream startup.");
     }
 
     // Broker kiválasztás (alapértelmezetten paper mód)
