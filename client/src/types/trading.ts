@@ -109,9 +109,14 @@ export interface User {
   createdAt: string;
 }
 
+export interface SessionUser {
+  id: string;
+}
+
 export interface SessionData {
-  user: User;
-  settings: UserSettings | null;
+  user: SessionUser;
+  settings: UserSettings;
+  serverTime: string;
 }
 
 export interface AccountSnapshot {

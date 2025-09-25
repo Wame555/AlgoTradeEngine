@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import type { Broker } from "./broker/types";
 import { z, ZodError } from "zod";
 
@@ -24,6 +24,8 @@ import { logError } from "./utils/logger";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
+const SESSION_TIMEOUT_MS = 5000;
+const SESSION_TIMEOUT_MESSAGE = `Session initialisation timed out after ${SESSION_TIMEOUT_MS}ms`;
 
 async function ensureDefaultUser() {
   let user = await storage.getUserByUsername(DEFAULT_SESSION_USERNAME);
@@ -32,6 +34,10 @@ async function ensureDefaultUser() {
       username: DEFAULT_SESSION_USERNAME,
       password: DEFAULT_SESSION_PASSWORD,
     });
+  }
+
+  if (!user) {
+    throw new Error("Failed to ensure default user account");
   }
 
   let settings = await storage.getUserSettings(user.id);
@@ -47,9 +53,31 @@ async function ensureDefaultUser() {
     });
   }
 
+  if (!settings) {
+    throw new Error("Failed to ensure default user settings");
+  }
+
   await storage.ensureIndicatorConfigsSeed(user.id);
 
   return { user, settings };
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
 }
 
 type Deps = {
@@ -120,22 +148,32 @@ const tradeCloseSchema = z.object({
   feeUsd: z.union([z.number(), z.string()]).optional(),
 });
 
-function respondWithError(res: any, scope: string, error: unknown, fallback: string) {
+function respondWithError(res: Response, scope: string, error: unknown, fallback: string) {
   if (error instanceof ZodError) {
     const firstError = error.errors[0]?.message ?? "Invalid request";
     logError(`${scope} validation`, error).catch(() => {});
-    return res.status(400).json({ message: firstError });
+    return res.status(400).json({ error: true, message: firstError });
   }
   if (error instanceof QuantityValidationError) {
     logError(`${scope} validation`, error).catch(() => {});
-    return res.status(400).json({ message: error.message });
+    return res.status(400).json({ error: true, message: error.message });
   }
+
+  const details = error instanceof Error ? error.message : undefined;
   logError(scope, error).catch(() => {});
-  return res.status(500).json({ message: fallback });
+  const payload: Record<string, unknown> = { error: true, message: fallback };
+  if (details && details !== fallback) {
+    payload.details = details;
+  }
+  return res.status(500).json(payload);
 }
 
 export function registerRoutes(app: Express, deps: Deps): void {
   const { broker, binanceService, telegramService, indicatorService, broadcast } = deps;
+
+  app.get("/healthz", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
 
   const calculateSignalForPair = async (symbol: string, timeframe: string) => {
     const klines = await binanceService.getKlines(symbol, timeframe, 200);
@@ -285,10 +323,19 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.get("/api/session", async (_req, res) => {
     try {
-      const sessionData = await ensureDefaultUser();
-      res.json(sessionData);
+      const { user, settings } = await withTimeout(
+        ensureDefaultUser(),
+        SESSION_TIMEOUT_MS,
+        SESSION_TIMEOUT_MESSAGE,
+      );
+
+      return res.json({
+        user: { id: user.id },
+        settings,
+        serverTime: new Date().toISOString(),
+      });
     } catch (error) {
-      respondWithError(res, "GET /api/session", error, "Failed to initialise session");
+      return respondWithError(res, "GET /api/session", error, "Failed to initialise session");
     }
   });
 
