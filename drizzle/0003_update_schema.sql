@@ -238,15 +238,15 @@ ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "fee";
 DO $$
 BEGIN
   IF to_regclass('public.idx_closed_positions_symbol_time') IS NOT NULL THEN
-    EXECUTE 'DROP INDEX public.idx_closed_positions_symbol_time';
+    EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time';
   END IF;
 
   IF to_regclass('public.idx_closed_positions_user') IS NOT NULL THEN
-    EXECUTE 'DROP INDEX public.idx_closed_positions_user';
+    EXECUTE 'DROP INDEX IF EXISTS public.idx_closed_positions_user';
   END IF;
 
   IF to_regclass('public.idx_indicator_configs_user_name') IS NOT NULL THEN
-    EXECUTE 'DROP INDEX public.idx_indicator_configs_user_name';
+    EXECUTE 'DROP INDEX IF EXISTS public.idx_indicator_configs_user_name';
   END IF;
 
   IF EXISTS (
@@ -256,7 +256,7 @@ BEGIN
       AND table_name = 'closed_positions'
       AND column_name = 'time'
   ) AND to_regclass('public.idx_closed_positions_symbol_time') IS NULL THEN
-    EXECUTE 'CREATE INDEX public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_symbol_time ON public.closed_positions(symbol, "time")';
   END IF;
 
   IF EXISTS (
@@ -266,7 +266,7 @@ BEGIN
       AND table_name = 'closed_positions'
       AND column_name = 'user_id'
   ) AND to_regclass('public.idx_closed_positions_user') IS NULL THEN
-    EXECUTE 'CREATE INDEX public.idx_closed_positions_user ON public."closed_positions"("user_id")';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS public.idx_closed_positions_user ON public."closed_positions"("user_id")';
   END IF;
 
   IF EXISTS (
@@ -284,7 +284,7 @@ BEGIN
       AND column_name = 'name'
   )
   AND to_regclass('public.idx_indicator_configs_user_name') IS NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX public.idx_indicator_configs_user_name ON public."indicator_configs"("user_id", "name")';
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS public.idx_indicator_configs_user_name ON public."indicator_configs"("user_id", "name")';
   END IF;
 END
 $$;
