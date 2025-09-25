@@ -8,6 +8,7 @@ import {
   numeric,
   pgTable,
   real,
+  serial,
   text,
   timestamp,
   uniqueIndex,
@@ -165,17 +166,31 @@ export const pairTimeframes = pgTable(
 );
 
 // Market data cache
-export const marketData = pgTable("market_data", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar("symbol", { length: 20 }).notNull(),
-  timeframe: varchar("timeframe", { length: 10 }).notNull(),
-  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
-  volume: decimal("volume", { precision: 18, scale: 8 }),
-  change24h: numeric("change_24h", { precision: 8, scale: 2 }),
-  high24h: decimal("high_24h", { precision: 18, scale: 8 }),
-  low24h: decimal("low_24h", { precision: 18, scale: 8 }),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
+export const marketData = pgTable(
+  "market_data",
+  {
+    id: serial("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    timeframe: text("timeframe").notNull(),
+    ts: timestamp("ts", { withTimezone: true }).notNull(),
+    open: numeric("open", { precision: 18, scale: 8 }).notNull(),
+    high: numeric("high", { precision: 18, scale: 8 }).notNull(),
+    low: numeric("low", { precision: 18, scale: 8 }).notNull(),
+    close: numeric("close", { precision: 18, scale: 8 }).notNull(),
+    volume: numeric("volume", { precision: 30, scale: 10 }).notNull(),
+  },
+  (table) => ({
+    symbolTimeframeTsUnique: uniqueIndex("market_data_symbol_timeframe_ts_uniq").on(
+      table.symbol,
+      table.timeframe,
+      table.ts,
+    ),
+    symbolTimeframeIndex: index("idx_market_data_symbol_timeframe").on(
+      table.symbol,
+      table.timeframe,
+    ),
+  }),
+);
 
 // Create insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
