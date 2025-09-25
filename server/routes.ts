@@ -76,8 +76,8 @@ const DEFAULT_USER_SETTINGS = {
   defaultLeverage: 1,
   riskPercent: 2,
   demoEnabled: true,
-  defaultTpPct: 1,
-  defaultSlPct: 0.5,
+  defaultTpPct: "1.00",
+  defaultSlPct: "0.50",
 } as const;
 
 async function ensureDemoUserRecord(): Promise<User> {

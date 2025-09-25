@@ -11,6 +11,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  unique,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -60,7 +61,7 @@ export const userSettings = pgTable(
     updatedAt: timestamp("updated_at").defaultNow(),
   },
   (table) => ({
-    userIdUnique: uniqueIndex("user_settings_user_id_unique").on(table.userId),
+    userIdUnique: unique("user_settings_user_id_unique").on(table.userId),
   }),
 );
 
@@ -153,9 +154,6 @@ export const pairTimeframes = pgTable(
       table.timeframe,
     ),
   }),
-  {
-    schema: "public",
-  },
 );
 
 // Market data cache
