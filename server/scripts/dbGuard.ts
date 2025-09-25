@@ -546,6 +546,24 @@ async function ensureUserSettingsUniqueConstraint(client: Client | PoolClient): 
   if (existingConstraint.rowCount > 0) {
     const currentName = existingConstraint.rows[0]!.constraint_name;
     if (currentName !== constraintName) {
+      if (await constraintExists(client, tableName, constraintName, "u")) {
+        console.warn(
+          `[userSettingsGuard] dropping redundant constraint ${currentName} on public.${tableName} because canonical constraint ${constraintName} already exists.`,
+        );
+        await client.query(
+          `ALTER TABLE public.${tableName} DROP CONSTRAINT ${quoteIdentifier(currentName)};`,
+        );
+        return;
+      }
+
+      const conflictingIndex = await getIndexMetadata(client, constraintName);
+      if (conflictingIndex) {
+        console.warn(
+          `[userSettingsGuard] skipping rename of constraint ${currentName} on public.${tableName} to ${constraintName} because the target name is already used by an index.`,
+        );
+        return;
+      }
+
       try {
         await client.query(
           `ALTER TABLE public.${tableName} RENAME CONSTRAINT ${quoteIdentifier(currentName)} TO ${quoteIdentifier(
