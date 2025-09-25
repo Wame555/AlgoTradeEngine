@@ -19,8 +19,10 @@ import { IndicatorService } from "./services/indicatorService";
 import { setLastPrice } from "./paper/PriceFeed";
 import { db, pool } from "./db";
 import { ensureSchema } from "./db/guards";
+import { runFuturesBackfill } from "./services/backfill";
 
 const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
+const runMigrationsOnStart = (process.env.RUN_MIGRATIONS_ON_START ?? "false").toLowerCase() === "true";
 
 const requestLogger: RequestHandler = (req, res, next) => {
     if (!shouldLogRequests) {
@@ -34,9 +36,7 @@ const requestLogger: RequestHandler = (req, res, next) => {
         const status = res.statusCode;
         const method = req.method;
         const url = req.originalUrl;
-        console.warn(
-            `[${new Date().toISOString()}] ${method} ${url} -> ${status} (${durationMs}ms)`,
-        );
+        console.warn(`[${new Date().toISOString()}] ${method} ${url} -> ${status} (${durationMs}ms)`);
     });
     next();
 };
@@ -99,15 +99,24 @@ wss.on("connection", (ws) => {
         console.error("[ensureSchema] unexpected error", schemaError);
     }
 
-    const migrationsFolder = path.resolve(
-        fileURLToPath(new URL("../drizzle", import.meta.url)),
-    );
-    try {
-        await migrate(db, { migrationsFolder });
-        log("database migrations complete", "migrator");
-    } catch (migrationError) {
-        console.error("Database migration failed:", migrationError);
-        process.exit(1);
+    const migrationsFolder = path.resolve(fileURLToPath(new URL("../drizzle", import.meta.url)));
+
+    if (runMigrationsOnStart) {
+        try {
+            await migrate(db, { migrationsFolder });
+            log("database migrations complete", "migrator");
+        } catch (migrationError) {
+            console.error("Database migration failed:", migrationError);
+            process.exit(1);
+        }
+
+        try {
+            await runFuturesBackfill();
+        } catch (backfillError) {
+            console.warn("[backfill] Startup backfill encountered an error", backfillError);
+        }
+    } else {
+        console.info("[startup] RUN_MIGRATIONS_ON_START flag is false. Skipping migrations/backfill.");
     }
 
     // Broker kiválasztás (alapértelmezetten paper mód)
