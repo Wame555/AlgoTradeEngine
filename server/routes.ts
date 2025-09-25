@@ -12,7 +12,12 @@ import {
   insertUserSettingsSchema,
   insertPositionSchema,
   closedPositions,
+  indicatorConfigs,
+  positions,
+  userSettings,
+  users,
   type Position,
+  type User,
   type UserSettings,
 } from "@shared/schema";
 import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
@@ -26,6 +31,7 @@ import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
+const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
 const SESSION_TIMEOUT_MS = 5000;
 const SESSION_TIMEOUT_MESSAGE = `Session initialisation timed out after ${SESSION_TIMEOUT_MS}ms`;
 
@@ -43,29 +49,98 @@ function runUserSettingsGuard(): Promise<void> {
 
 const userSettingsGuardBootstrap = runUserSettingsGuard();
 
-async function ensureDefaultUser() {
-  let user = await storage.getUserByUsername(DEFAULT_SESSION_USERNAME);
-  if (!user) {
-    user = await storage.createUser({
-      username: DEFAULT_SESSION_USERNAME,
-      password: DEFAULT_SESSION_PASSWORD,
-    });
-  }
+const DEFAULT_USER_SETTINGS = {
+  isTestnet: true,
+  defaultLeverage: 1,
+  riskPercent: 2,
+  demoEnabled: true,
+  defaultTpPct: 1,
+  defaultSlPct: 0.5,
+} as const;
 
-  if (!user) {
-    throw new Error("Failed to ensure default user account");
-  }
+async function ensureDemoUserRecord(): Promise<User> {
+  return db.transaction(async (tx) => {
+    const [existingDemoById] = await tx.select().from(users).where(eq(users.id, DEMO_USER_ID)).limit(1);
+    const [existingByUsername] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.username, DEFAULT_SESSION_USERNAME))
+      .limit(1);
+
+    if (existingByUsername && existingByUsername.id !== DEMO_USER_ID) {
+      const legacyId = existingByUsername.id;
+
+      const [existingDemoSettings] = await tx
+        .select({ id: userSettings.id })
+        .from(userSettings)
+        .where(eq(userSettings.userId, DEMO_USER_ID))
+        .limit(1);
+
+      const [legacySettings] = await tx
+        .select({ id: userSettings.id })
+        .from(userSettings)
+        .where(eq(userSettings.userId, legacyId))
+        .limit(1);
+
+      if (legacySettings) {
+        if (existingDemoSettings) {
+          await tx.delete(userSettings).where(eq(userSettings.userId, legacyId));
+        } else {
+          await tx.update(userSettings).set({ userId: DEMO_USER_ID }).where(eq(userSettings.userId, legacyId));
+        }
+      }
+
+      await tx.update(indicatorConfigs).set({ userId: DEMO_USER_ID }).where(eq(indicatorConfigs.userId, legacyId));
+      await tx.update(positions).set({ userId: DEMO_USER_ID }).where(eq(positions.userId, legacyId));
+      await tx.update(closedPositions).set({ userId: DEMO_USER_ID }).where(eq(closedPositions.userId, legacyId));
+
+      if (existingDemoById) {
+        await tx.delete(users).where(eq(users.id, legacyId));
+      } else {
+        await tx
+          .update(users)
+          .set({
+            id: DEMO_USER_ID,
+            username: DEFAULT_SESSION_USERNAME,
+            password: DEFAULT_SESSION_PASSWORD,
+          })
+          .where(eq(users.id, legacyId));
+      }
+    }
+
+    await tx
+      .insert(users)
+      .values({
+        id: DEMO_USER_ID,
+        username: DEFAULT_SESSION_USERNAME,
+        password: DEFAULT_SESSION_PASSWORD,
+      })
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          username: DEFAULT_SESSION_USERNAME,
+          password: DEFAULT_SESSION_PASSWORD,
+        },
+      });
+
+    const [user] = await tx.select().from(users).where(eq(users.id, DEMO_USER_ID)).limit(1);
+
+    if (!user) {
+      throw new Error("Failed to resolve demo user account");
+    }
+
+    return user;
+  });
+}
+
+async function ensureDefaultUser() {
+  const user = await ensureDemoUserRecord();
 
   let settings = await storage.getUserSettings(user.id);
-  if (!settings) {
+  if (!settings || settings.userId !== user.id) {
     settings = await storage.upsertUserSettings({
       userId: user.id,
-      isTestnet: true,
-      defaultLeverage: 1,
-      riskPercent: 2,
-      demoEnabled: true,
-      defaultTpPct: 1,
-      defaultSlPct: 0.5,
+      ...DEFAULT_USER_SETTINGS,
     });
   }
 
@@ -347,14 +422,22 @@ export function registerRoutes(app: Express, deps: Deps): void {
       );
 
       return res.json({
-        user: { id: user.id },
+        userId: user.id,
+        demo: user.id === DEMO_USER_ID,
         settings,
         serverTime: new Date().toISOString(),
       });
     } catch (error) {
+      const fallback = {
+        userId: DEMO_USER_ID,
+        demo: true,
+        settings: null,
+        serverTime: new Date().toISOString(),
+      } as const;
+
       const pgError = error as DatabaseError | undefined;
       if (pgError && typeof pgError === "object" && "code" in pgError) {
-        console.error("[session] failed to initialise session", {
+        console.warn("[session] failed to initialise session", {
           message: pgError.message,
           code: pgError.code,
           constraint: pgError.constraint,
@@ -367,14 +450,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
           detail: (pgError as { detail?: unknown }).detail,
         });
       } else {
-        console.error("[session] failed to initialise session", error);
+        console.warn("[session] failed to initialise session", error);
         void logError("GET /api/session", error);
       }
 
-      return res.status(500).json({
-        error: true,
-        message: "Failed to initialise session",
-        hint: "Database schema mismatch detected. Please run migrations.",
+      return res.json({
+        ...fallback,
+        warning:
+          "Failed to initialise session. Database schema mismatch detected. Please run migrations.",
       });
     }
   });

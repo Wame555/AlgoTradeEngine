@@ -11,13 +11,14 @@ import {
   numeric,
   real,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // User table
 export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: uuid("id").primaryKey().defaultRandom(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -38,8 +39,10 @@ export const tradingPairs = pgTable("trading_pairs", {
 
 // User settings
 export const userSettings = pgTable("user_settings", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().unique(),
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   telegramBotToken: text("telegram_bot_token"),
   telegramChatId: text("telegram_chat_id"),
   binanceApiKey: text("binance_api_key"),
@@ -52,12 +55,14 @@ export const userSettings = pgTable("user_settings", {
   defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  userIdUnique: uniqueIndex("user_settings_user_id_unique").on(table.userId),
+}));
 
 // Indicator configurations
 export const indicatorConfigs = pgTable("indicator_configs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   name: text("name").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at").defaultNow(),
@@ -66,7 +71,7 @@ export const indicatorConfigs = pgTable("indicator_configs", {
 // Trading positions
 export const positions = pgTable("positions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   symbol: varchar("symbol", { length: 20 }).notNull(),
   side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
   size: decimal("size", { precision: 18, scale: 8 }).notNull(),
@@ -85,7 +90,7 @@ export const positions = pgTable("positions", {
 // Closed positions
 export const closedPositions = pgTable("closed_positions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   symbol: text("symbol").notNull(),
   side: text("side").notNull(),
   size: numeric("size", { precision: 18, scale: 8 }).notNull(),

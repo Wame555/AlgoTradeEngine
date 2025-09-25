@@ -81,5 +81,5 @@ export function useSession() {
 
 export function useUserId(): string | undefined {
   const { session } = useSession();
-  return session?.user.id;
+  return session?.userId;
 }

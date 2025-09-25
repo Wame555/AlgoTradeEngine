@@ -69,7 +69,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { session } = useSession();
-  const userId = session?.user.id;
+  const userId = session?.userId;
   const { data: tradingPairs } = useTradingPairs();
   const { data: settings } = useUserSettings();
 

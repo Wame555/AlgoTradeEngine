@@ -20,14 +20,21 @@ import { setLastPrice } from "./paper/PriceFeed";
 import { db, pool } from "./db";
 import { ensureSchema } from "./db/guards";
 
+const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
+
 const requestLogger: RequestHandler = (req, res, next) => {
+    if (!shouldLogRequests) {
+        next();
+        return;
+    }
+
     const startedAt = Date.now();
     res.on("finish", () => {
         const durationMs = Date.now() - startedAt;
         const status = res.statusCode;
         const method = req.method;
         const url = req.originalUrl;
-        console.log(
+        console.warn(
             `[${new Date().toISOString()}] ${method} ${url} -> ${status} (${durationMs}ms)`,
         );
     });
@@ -48,7 +55,9 @@ const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
 // --- Express app + HTTP szerver ---
 const app = express();
-app.use(requestLogger);
+if (shouldLogRequests) {
+    app.use(requestLogger);
+}
 app.use(express.json());
 
 const httpServer = createServer(app);
@@ -68,10 +77,14 @@ const broadcast = (data: any) => {
 
 wss.on("connection", (ws) => {
     clients.add(ws);
-    console.log("WebSocket client connected");
+    if (shouldLogRequests) {
+        console.warn("WebSocket client connected");
+    }
     ws.on("close", () => {
         clients.delete(ws);
-        console.log("WebSocket client disconnected");
+        if (shouldLogRequests) {
+            console.warn("WebSocket client disconnected");
+        }
     });
     ws.send(JSON.stringify({ type: "connection", status: "connected" }));
 });
