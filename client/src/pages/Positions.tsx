@@ -1,7 +1,15 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { X, Edit } from "lucide-react";
 import { useClosedPositions, usePositions } from "@/hooks/useTradingData";
@@ -9,6 +17,17 @@ import { PriceUpdate } from "@/types/trading";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TIMEFRAMES } from "@/constants/timeframes";
+import type { Timeframe } from "@/types/trading";
+import { formatPct, formatUsd, trendClass } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface PositionsProps {
   priceData: Map<string, PriceUpdate>;
@@ -19,6 +38,8 @@ export default function Positions({ priceData }: PositionsProps) {
   const { data: closedPositions, isLoading: isLoadingClosed } = useClosedPositions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [selectedTimeframes, setSelectedTimeframes] = useState<Record<string, Timeframe>>({});
+  const defaultTimeframe: Timeframe = "1d";
 
   const closePositionMutation = useMutation({
     mutationFn: async (positionId: string) => {
@@ -48,6 +69,15 @@ export default function Positions({ priceData }: PositionsProps) {
     }
   };
 
+  const handleTimeframeChange = (positionId: string, value: string) => {
+    if ((TIMEFRAMES as readonly string[]).includes(value)) {
+      setSelectedTimeframes((prev) => ({
+        ...prev,
+        [positionId]: value as Timeframe,
+      }));
+    }
+  };
+
   const calculatePnL = (position: any, currentPrice?: string) => {
     if (!currentPrice) {
       const stored = Number(position.pnl ?? 0);
@@ -69,20 +99,24 @@ export default function Positions({ priceData }: PositionsProps) {
   };
 
   const formatPnL = (pnl: number) => {
-    const sign = pnl >= 0 ? '+' : '';
-    return `${sign}$${pnl.toFixed(2)}`;
+    if (!Number.isFinite(pnl)) return '—';
+    const absolute = Math.abs(pnl);
+    const formatted = formatUsd(absolute);
+    if (pnl > 0) return `+$${formatted}`;
+    if (pnl < 0) return `-$${formatted}`;
+    return `$${formatted}`;
   };
 
   const formatPnLPercent = (pct: number) => {
     if (!Number.isFinite(pct)) return '—';
-    const sign = pct >= 0 ? '+' : '';
-    return `${sign}${pct.toFixed(2)}%`;
+    const formatted = formatPct(pct);
+    return pct > 0 ? `+${formatted}` : formatted;
   };
 
   const formatCurrency = (value: string | number | undefined) => {
     const numeric = Number(value ?? 0);
     if (!Number.isFinite(numeric)) return '—';
-    return `$${numeric.toFixed(2)}`;
+    return `$${formatUsd(numeric)}`;
   };
 
   const formatPrice = (value: string | number | undefined, digits: number = 4) => {
@@ -149,103 +183,105 @@ export default function Positions({ priceData }: PositionsProps) {
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
-              {positions.map((position) => {
-                const priceInfo = priceData.get(position.symbol);
-                const currentPrice = priceInfo?.price ?? position.currentPrice ?? position.entryPrice;
-                const pnl = calculatePnL(position, priceInfo?.price);
-                const pnlColor = pnl >= 0 ? 'text-green-500' : 'text-red-500';
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Symbol</TableHead>
+                      <TableHead>Side</TableHead>
+                      <TableHead>Size</TableHead>
+                      <TableHead>Entry</TableHead>
+                      <TableHead>Current Price</TableHead>
+                      <TableHead>P&amp;L</TableHead>
+                      <TableHead className="text-right">TF % / P&amp;L</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {positions.map((position) => {
+                      const priceInfo = priceData.get(position.symbol);
+                      const currentPrice = priceInfo?.price ?? position.currentPrice ?? position.entryPrice;
+                      const pnl = calculatePnL(position, priceInfo?.price);
+                      const pnlColor = trendClass(pnl);
+                      const timeframe = selectedTimeframes[position.id] ?? defaultTimeframe;
+                      const changeValue = Number(position.changePctByTimeframe?.[timeframe] ?? 0);
+                      const pnlValue = Number(position.pnlByTimeframe?.[timeframe] ?? 0);
+                      const timeframeClass = trendClass(changeValue);
 
-                return (
-                  <Card key={`${position.id}`} className="relative">
-                    <CardContent className="p-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-sm font-bold text-white">
-                              {position.symbol.replace('USDT', '')}
-                            </div>
-                            <div>
-                              <div className="font-medium text-lg" data-testid={`position-symbol-${position.id}`}>
-                                {position.symbol}
-                              </div>
-                              <div className="text-sm text-muted-foreground">
-                                Size: {position.size} • Entry: ${position.entryPrice}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center space-x-6">
-                          <div className="text-center">
-                            <div className="text-sm text-muted-foreground">Side</div>
+                      return (
+                        <TableRow key={position.id}>
+                          <TableCell className="font-medium" data-testid={`position-symbol-${position.id}`}>
+                            {position.symbol}
+                          </TableCell>
+                          <TableCell data-testid={`position-side-${position.id}`}>
                             <Badge
                               variant={position.side === 'LONG' ? 'default' : 'destructive'}
                               className={position.side === 'LONG' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}
-                              data-testid={`position-side-${position.id}`}
                             >
                               {position.side}
                             </Badge>
-                          </div>
-
-                          <div className="text-center">
-                          <div className="text-sm text-muted-foreground">Current Price</div>
-                          <div className="font-mono font-medium" data-testid={`position-price-${position.id}`}>
+                          </TableCell>
+                          <TableCell>{position.size}</TableCell>
+                          <TableCell className="font-mono">{formatPrice(position.entryPrice)}</TableCell>
+                          <TableCell className="font-mono" data-testid={`position-price-${position.id}`}>
                             {formatPrice(currentPrice)}
-                          </div>
-                          </div>
-
-                          <div className="text-center">
-                            <div className="text-sm text-muted-foreground">P&L</div>
-                            <div className={`font-mono font-bold ${pnlColor}`} data-testid={`position-pnl-${position.id}`}>
-                              {formatPnL(pnl)}
+                          </TableCell>
+                          <TableCell
+                            className={cn('font-mono', pnlColor)}
+                            data-testid={`position-pnl-${position.id}`}
+                          >
+                            {formatPnL(pnl)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-col items-end gap-1">
+                              <Select
+                                value={timeframe}
+                                onValueChange={(value) => handleTimeframeChange(position.id, value)}
+                              >
+                                <SelectTrigger className="h-8 w-[88px] text-xs">
+                                  <SelectValue placeholder="TF" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {TIMEFRAMES.map((tf) => (
+                                    <SelectItem key={tf} value={tf} className="text-xs">
+                                      {tf}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <span className={cn('font-mono text-sm', timeframeClass)}>
+                                {`${formatPct(changeValue)} | ${formatUsd(pnlValue)} $`}
+                              </span>
                             </div>
-                          </div>
-
-                          <div className="flex items-center space-x-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              data-testid={`button-edit-${position.id}`}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleClosePosition(position.id)}
-                              disabled={closePositionMutation.isPending}
-                              data-testid={`button-close-${position.id}`}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {(position.stopLoss || position.takeProfit) && (
-                        <div className="mt-4 pt-4 border-t border-border">
-                          <div className="flex items-center space-x-6 text-sm">
-                            {position.stopLoss && (
-                              <div>
-                                <span className="text-muted-foreground">Stop Loss: </span>
-                                <span className="font-mono">${position.stopLoss}</span>
-                              </div>
-                            )}
-                            {position.takeProfit && (
-                              <div>
-                                <span className="text-muted-foreground">Take Profit: </span>
-                                <span className="font-mono">${position.takeProfit}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid={`button-edit-${position.id}`}
+                              >
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleClosePosition(position.id)}
+                                disabled={closePositionMutation.isPending}
+                                data-testid={`button-close-${position.id}`}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 

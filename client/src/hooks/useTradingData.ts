@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   TradingPair,
-  Position,
   ClosedPositionSummary,
   Signal,
   MarketData,
@@ -11,6 +10,7 @@ import {
   StatsSummary,
 } from '@/types/trading';
 import { useSession, useUserId } from '@/hooks/useSession';
+import { useOpenPositions } from '@/hooks/useOpenPositions';
 
 export function useTradingPairs() {
   return useQuery<TradingPair[]>({
@@ -40,14 +40,7 @@ export function useAccount() {
 }
 
 export function usePositions() {
-  const userId = useUserId();
-
-  return useQuery<Position[]>({
-    queryKey: ['/api/positions/open', { userId }],
-    staleTime: 10 * 1000,
-    refetchInterval: 10 * 1000,
-    enabled: Boolean(userId),
-  });
+  return useOpenPositions();
 }
 
 export function useClosedPositions(symbol?: string, limit: number = 50, offset: number = 0) {

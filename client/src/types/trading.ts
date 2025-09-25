@@ -1,5 +1,6 @@
 import type { OpenPositionResponse, StatsChangeResponse, SupportedTimeframe } from '@shared/types';
 import { SUPPORTED_TIMEFRAMES as SHARED_SUPPORTED_TIMEFRAMES } from '@shared/types';
+import { TIMEFRAMES } from '@/constants/timeframes';
 
 export interface TradingPair {
   id: string;
@@ -118,6 +119,17 @@ export interface StatsSummary {
 }
 
 export type StatsChange = StatsChangeResponse;
+
+export type Timeframe = (typeof TIMEFRAMES)[number];
+
+export interface ChangeStats {
+  symbol: string;
+  timeframe: Timeframe;
+  prevClose: number;
+  lastPrice: number;
+  changePct: number;
+  pnlUsdForOpenPositionsBySymbol: number;
+}
 
 export interface PriceUpdate {
   symbol: string;
