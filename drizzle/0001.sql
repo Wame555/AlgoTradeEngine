@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS public."market_data" (
     "updated_at" timestamp DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS public."users_username_unique" ON public."users" ("username");
-CREATE UNIQUE INDEX IF NOT EXISTS public."user_settings_user_id_unique" ON public."user_settings" ("user_id");
-CREATE UNIQUE INDEX IF NOT EXISTS public."trading_pairs_symbol_unique" ON public."trading_pairs" ("symbol");
-CREATE UNIQUE INDEX IF NOT EXISTS public."indicator_configs_name_unique" ON public."indicator_configs" ("name");
-CREATE UNIQUE INDEX IF NOT EXISTS public."pair_timeframes_symbol_timeframe_unique" ON public."pair_timeframes" ("symbol", "timeframe");
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON public."users" ("username");
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_user_id_unique ON public."user_settings" ("user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS trading_pairs_symbol_unique ON public."trading_pairs" ("symbol");
+CREATE UNIQUE INDEX IF NOT EXISTS indicator_configs_name_unique ON public."indicator_configs" ("name");
+CREATE UNIQUE INDEX IF NOT EXISTS pair_timeframes_symbol_timeframe_unique ON public."pair_timeframes" ("symbol", "timeframe");

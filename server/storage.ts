@@ -166,22 +166,65 @@ export class DatabaseStorage implements IStorage {
   async upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings> {
     const now = new Date();
 
-    const insertPayload = pruneUndefined(settings) as UserSettingsInsert;
+    const columnMap: Record<keyof UserSettingsInsert, string> = {
+      id: "id",
+      userId: "user_id",
+      telegramBotToken: "telegram_bot_token",
+      telegramChatId: "telegram_chat_id",
+      binanceApiKey: "binance_api_key",
+      binanceApiSecret: "binance_api_secret",
+      isTestnet: "is_testnet",
+      defaultLeverage: "default_leverage",
+      riskPercent: "risk_percent",
+      createdAt: "created_at",
+      updatedAt: "updated_at",
+      demoEnabled: "demo_enabled",
+      defaultTpPct: "default_tp_pct",
+      defaultSlPct: "default_sl_pct",
+    };
+
+    const insertPayload = {
+      ...pruneUndefined(settings),
+      updatedAt: now,
+    } as UserSettingsInsert;
     const updatePayload = pruneUndefined({ ...settings }) as Partial<UserSettingsInsert>;
     delete (updatePayload as Record<string, unknown>).userId;
 
-    const [result] = await db
-      .insert(userSettings)
-      .values(insertPayload)
-      .onConflictDoUpdate({
-        target: userSettings.userId,
-        set: {
-          ...updatePayload,
-          updatedAt: now,
-        },
-      })
-      .returning();
-    return result;
+    const insertColumns = Object.keys(insertPayload).map((key) => columnMap[key as keyof UserSettingsInsert]);
+    const insertValues = Object.values(insertPayload);
+
+    const updateAssignments = Object.entries(updatePayload)
+      .filter(([key]) => key !== "userId")
+      .map(([key, value]) => sql`${sql.identifier([columnMap[key as keyof UserSettingsInsert]])} = ${value}`);
+    updateAssignments.push(sql`${sql.identifier([columnMap.updatedAt])} = ${now}`);
+
+    const insertColumnsSql = sql.join(
+      insertColumns.map((column) => sql.identifier([column])),
+      sql`, `,
+    );
+    const insertValuesSql = sql.join(insertValues.map((value) => sql`${value}`), sql`, `);
+    const updateSetSql = sql.join(updateAssignments, sql`, `);
+
+    try {
+      const result = await db.execute<UserSettings>(
+        sql`
+          INSERT INTO public.user_settings (${insertColumnsSql})
+          VALUES (${insertValuesSql})
+          ON CONFLICT ON CONSTRAINT user_settings_user_id_unique
+          DO UPDATE SET ${updateSetSql}
+          RETURNING *;
+        `,
+      );
+
+      return result.rows[0]!;
+    } catch (error) {
+      console.warn("[storage.upsertUserSettings] failed", {
+        insertColumns,
+        insertValues,
+        updateAssignments: updateAssignments.map((assignment) => assignment.toQuery?.() ?? assignment),
+      });
+      throw error;
+    }
   }
 
   async getAllTradingPairs(): Promise<TradingPair[]> {

@@ -4,6 +4,13 @@ const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
 const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
 
+type IndexSpec = {
+  name: string;
+  table: string;
+  columns: string[];
+  unique?: boolean;
+};
+
 function isPool(db: Pool | Client): db is Pool {
   return typeof (db as Pool).connect === "function" && typeof (db as Pool).end === "function";
 }
@@ -14,6 +21,70 @@ async function tableExists(client: Client | PoolClient, tableName: string): Prom
     [`public.${tableName}`],
   );
   return Boolean(result.rows[0]?.exists);
+}
+
+async function getIndexDefinition(
+  client: Client | PoolClient,
+  indexName: string,
+): Promise<string | null> {
+  const result = await client.query<{ indexdef: string }>(
+    `
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = $1
+      LIMIT 1;
+    `,
+    [indexName],
+  );
+  return result.rows[0]?.indexdef ?? null;
+}
+
+function normalizeIdentifierList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((part) => part.trim().replace(/"/g, ""))
+    .filter((part) => part.length > 0);
+}
+
+async function ensureIndex(
+  client: Client | PoolClient,
+  { name, table, columns, unique }: IndexSpec,
+): Promise<void> {
+  if (!(await tableExists(client, table))) {
+    console.warn(`[userSettingsGuard] table public.${table} missing, unable to ensure index ${name}.`);
+    return;
+  }
+
+  const definition = await getIndexDefinition(client, name);
+  const expectedColumns = columns.map((column) => column.toLowerCase());
+  const createSql = `${unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX"} IF NOT EXISTS ${name} ON public.${table}(${columns.join(", ")});`;
+
+  if (definition) {
+    const normalizedDef = definition.toLowerCase();
+    const columnsMatch = (() => {
+      const match = definition.match(/\(([^)]+)\)/);
+      if (!match) {
+        return false;
+      }
+      const existingColumns = normalizeIdentifierList(match[1] ?? "");
+      if (existingColumns.length !== expectedColumns.length) {
+        return false;
+      }
+      return expectedColumns.every((column, index) => existingColumns[index]?.toLowerCase() === column);
+    })();
+
+    const uniquenessMatches = unique ? normalizedDef.startsWith("create unique index") : !normalizedDef.startsWith("create unique index");
+    const tableMatches = normalizedDef.includes(`on public.${table.toLowerCase()}`);
+
+    if (columnsMatch && uniquenessMatches && tableMatches) {
+      return;
+    }
+
+    await client.query(`DROP INDEX IF EXISTS public.${name};`);
+    console.warn(`[userSettingsGuard] rebuilt index public.${name} with canonical definition.`);
+  }
+
+  await client.query(createSql);
 }
 
 async function columnExists(
@@ -366,6 +437,29 @@ async function ensureAuxiliaryUserColumns(client: Client | PoolClient): Promise<
   await ensureUuidColumn(client, "closed_positions", "user_id", { notNull: true, fillWithDemoId: true });
 }
 
+async function ensureClosedPositionsIndexes(client: Client | PoolClient): Promise<void> {
+  await ensureIndex(client, {
+    name: "idx_closed_positions_symbol_time",
+    table: "closed_positions",
+    columns: ["symbol", "closed_at"],
+  });
+
+  await ensureIndex(client, {
+    name: "idx_closed_positions_user",
+    table: "closed_positions",
+    columns: ["user_id"],
+  });
+}
+
+async function ensureIndicatorIndexes(client: Client | PoolClient): Promise<void> {
+  await ensureIndex(client, {
+    name: "idx_indicator_configs_user_name",
+    table: "indicator_configs",
+    columns: ["user_id", "name"],
+    unique: true,
+  });
+}
+
 async function ensureDemoUser(client: Client | PoolClient): Promise<void> {
   if (!(await tableExists(client, "users"))) {
     console.warn("[userSettingsGuard] table public.users missing, skipping demo user upsert.");
@@ -497,6 +591,8 @@ export async function ensureUserSettingsGuard(db: Pool | Client): Promise<void> 
       await ensureUsersTable(client);
       await ensureUserSettingsTable(client);
       await ensureAuxiliaryUserColumns(client);
+      await ensureIndicatorIndexes(client);
+      await ensureClosedPositionsIndexes(client);
       await ensureDemoUser(client);
       await client.query("COMMIT");
     } catch (error) {

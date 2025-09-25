@@ -37,6 +37,28 @@ const SESSION_TIMEOUT_MESSAGE = `Session initialisation timed out after ${SESSIO
 
 let userSettingsGuardPromise: Promise<void> | null = null;
 
+type HealthIndexSpec =
+  | {
+      type: "index";
+      name: string;
+      table: string;
+      columns: string[];
+      unique?: boolean;
+    }
+  | {
+      type: "constraint";
+      name: string;
+      table: string;
+    };
+
+const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
+  { type: "constraint", name: "user_settings_user_id_unique", table: "user_settings" },
+  { type: "index", name: "idx_closed_positions_symbol_time", table: "closed_positions", columns: ["symbol", "closed_at"] },
+  { type: "index", name: "idx_closed_positions_user", table: "closed_positions", columns: ["user_id"] },
+  { type: "index", name: "idx_indicator_configs_user_name", table: "indicator_configs", columns: ["user_id", "name"] },
+  { type: "index", name: "pair_timeframes_symbol_timeframe_unique", table: "pair_timeframes", columns: ["symbol", "timeframe"], unique: true },
+];
+
 function runUserSettingsGuard(): Promise<void> {
   if (!userSettingsGuardPromise) {
     userSettingsGuardPromise = ensureUserSettingsGuard(pool).catch((error) => {
@@ -239,6 +261,102 @@ const tradeCloseSchema = z.object({
   feeUsd: z.union([z.number(), z.string()]).optional(),
 });
 
+function normalizeColumnList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim().replace(/"/g, ""))
+    .filter((part) => part.length > 0);
+}
+
+async function verifyIndexRequirement(spec: Extract<HealthIndexSpec, { type: "index" }>): Promise<string | null> {
+  const { rows } = await pool.query<{ indexdef: string }>(
+    `
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = $1
+      LIMIT 1;
+    `,
+    [spec.name],
+  );
+
+  const definition = rows[0]?.indexdef;
+  if (!definition) {
+    return `missing index public.${spec.name}`;
+  }
+
+  const normalized = definition.toLowerCase();
+  const tableMatch = normalized.includes(`on public.${spec.table}`);
+  const uniqueMatches = spec.unique ? normalized.startsWith("create unique index") : true;
+
+  const columnMatch = (() => {
+    const match = definition.match(/\(([^)]+)\)/);
+    if (!match) {
+      return false;
+    }
+    const columns = normalizeColumnList(match[1] ?? "").map((column) => column.toLowerCase());
+    if (columns.length !== spec.columns.length) {
+      return false;
+    }
+    return spec.columns.every((column, index) => columns[index] === column.toLowerCase());
+  })();
+
+  if (!tableMatch || !columnMatch || !uniqueMatches) {
+    return `index public.${spec.name} has unexpected definition`;
+  }
+
+  return null;
+}
+
+async function verifyConstraintRequirement(spec: Extract<HealthIndexSpec, { type: "constraint" }>): Promise<string | null> {
+  const { rows } = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE c.conname = $1 AND n.nspname = 'public' AND t.relname = $2
+      ) AS exists;
+    `,
+    [spec.name, spec.table],
+  );
+
+  if (!rows[0]?.exists) {
+    return `constraint public.${spec.table}.${spec.name} missing`;
+  }
+
+  return null;
+}
+
+async function performHealthCheck(): Promise<{ ok: boolean; issues: string[] }> {
+  const issues: string[] = [];
+
+  try {
+    await pool.query("SELECT 1");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    issues.push(`database connectivity failed: ${message}`);
+    return { ok: false, issues };
+  }
+
+  for (const spec of HEALTH_CHECK_REQUIREMENTS) {
+    try {
+      const issue =
+        spec.type === "index"
+          ? await verifyIndexRequirement(spec)
+          : await verifyConstraintRequirement(spec);
+      if (issue) {
+        issues.push(issue);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push(`unable to verify ${spec.type} ${spec.name}: ${message}`);
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
 function respondWithError(res: Response, scope: string, error: unknown, fallback: string) {
   if (error instanceof ZodError) {
     const firstError = error.errors[0]?.message ?? "Invalid request";
@@ -262,8 +380,12 @@ function respondWithError(res: Response, scope: string, error: unknown, fallback
 export function registerRoutes(app: Express, deps: Deps): void {
   const { broker, binanceService, telegramService, indicatorService, broadcast } = deps;
 
-  app.get("/healthz", (_req, res) => {
-    res.status(200).json({ ok: true });
+  app.get("/healthz", async (_req, res) => {
+    const status = await performHealthCheck();
+    if (!status.ok) {
+      return res.status(503).json({ ok: false, issues: status.issues });
+    }
+    return res.status(200).json({ ok: true });
   });
 
   const calculateSignalForPair = async (symbol: string, timeframe: string) => {

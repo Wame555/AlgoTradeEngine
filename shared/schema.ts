@@ -1,17 +1,18 @@
 import { sql } from "drizzle-orm";
 import {
-  pgTable,
-  varchar,
-  text,
-  decimal,
-  integer,
-  timestamp,
   boolean,
+  decimal,
+  index,
+  integer,
   jsonb,
   numeric,
+  pgTable,
   real,
+  text,
+  timestamp,
   uniqueIndex,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -38,35 +39,48 @@ export const tradingPairs = pgTable("trading_pairs", {
 });
 
 // User settings
-export const userSettings = pgTable("user_settings", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  telegramBotToken: text("telegram_bot_token"),
-  telegramChatId: text("telegram_chat_id"),
-  binanceApiKey: text("binance_api_key"),
-  binanceApiSecret: text("binance_api_secret"),
-  isTestnet: boolean("is_testnet").default(true),
-  defaultLeverage: integer("default_leverage").default(1),
-  riskPercent: real("risk_percent").default(2),
-  demoEnabled: boolean("demo_enabled").default(true),
-  defaultTpPct: numeric("default_tp_pct", { precision: 5, scale: 2 }).default("1.00"),
-  defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => ({
-  userIdUnique: uniqueIndex("user_settings_user_id_unique").on(table.userId),
-}));
+export const userSettings = pgTable(
+  "user_settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    telegramBotToken: text("telegram_bot_token"),
+    telegramChatId: text("telegram_chat_id"),
+    binanceApiKey: text("binance_api_key"),
+    binanceApiSecret: text("binance_api_secret"),
+    isTestnet: boolean("is_testnet").default(true),
+    defaultLeverage: integer("default_leverage").default(1),
+    riskPercent: real("risk_percent").default(2),
+    demoEnabled: boolean("demo_enabled").default(true),
+    defaultTpPct: numeric("default_tp_pct", { precision: 5, scale: 2 }).default("1.00"),
+    defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userIdUnique: uniqueIndex("user_settings_user_id_unique").on(table.userId),
+  }),
+);
 
 // Indicator configurations
-export const indicatorConfigs = pgTable("indicator_configs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull(),
-  name: text("name").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const indicatorConfigs = pgTable(
+  "indicator_configs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    userNameUnique: uniqueIndex("idx_indicator_configs_user_name").on(
+      table.userId,
+      table.name,
+    ),
+  }),
+);
 
 // Trading positions
 export const positions = pgTable("positions", {
@@ -88,19 +102,29 @@ export const positions = pgTable("positions", {
 });
 
 // Closed positions
-export const closedPositions = pgTable("closed_positions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull(),
-  symbol: text("symbol").notNull(),
-  side: text("side").notNull(),
-  size: numeric("size", { precision: 18, scale: 8 }).notNull(),
-  entryPrice: numeric("entry_price", { precision: 18, scale: 8 }).notNull(),
-  exitPrice: numeric("exit_price", { precision: 18, scale: 8 }).notNull(),
-  feeUsd: numeric("fee_usd", { precision: 18, scale: 8 }).notNull().default("0"),
-  pnlUsd: numeric("pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
-  openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
-  closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
-});
+export const closedPositions = pgTable(
+  "closed_positions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id").notNull(),
+    symbol: text("symbol").notNull(),
+    side: text("side").notNull(),
+    size: numeric("size", { precision: 18, scale: 8 }).notNull(),
+    entryPrice: numeric("entry_price", { precision: 18, scale: 8 }).notNull(),
+    exitPrice: numeric("exit_price", { precision: 18, scale: 8 }).notNull(),
+    feeUsd: numeric("fee_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+    pnlUsd: numeric("pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    symbolClosedAtIdx: index("idx_closed_positions_symbol_time").on(
+      table.symbol,
+      table.closedAt,
+    ),
+    userIdx: index("idx_closed_positions_user").on(table.userId),
+  }),
+);
 
 // Trading signals
 export const signals = pgTable("signals", {
@@ -115,17 +139,24 @@ export const signals = pgTable("signals", {
 });
 
 // Pair timeframe settings
-export const pairTimeframes = pgTable("pair_timeframes", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar("symbol", { length: 20 }).notNull(),
-  timeframe: varchar("timeframe", { length: 10 }).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-}, (table) => ({
-  symbolTimeframeUnique: uniqueIndex("pair_timeframes_symbol_timeframe_unique").on(
-    table.symbol,
-    table.timeframe,
-  ),
-}));
+export const pairTimeframes = pgTable(
+  "pair_timeframes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    timeframe: varchar("timeframe", { length: 10 }).notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    symbolTimeframeUnique: uniqueIndex("pair_timeframes_symbol_timeframe_unique").on(
+      table.symbol,
+      table.timeframe,
+    ),
+  }),
+  {
+    schema: "public",
+  },
+);
 
 // Market data cache
 export const marketData = pgTable("market_data", {
