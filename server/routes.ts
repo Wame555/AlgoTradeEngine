@@ -26,13 +26,18 @@ import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradi
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
-import { getLastPrice } from "./paper/PriceFeed";
+import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
 import { logError } from "./utils/logger";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
-import { getChangePct, getPnlByTimeframes } from "./services/metrics";
-import { SUPPORTED_TIMEFRAMES, type OpenPositionResponse, type SupportedTimeframe } from "@shared/types";
+import { getChangePct, getPnlByTimeframes, getLastPrice as getMetricsLastPrice } from "./services/metrics";
+import {
+  SUPPORTED_TIMEFRAMES,
+  type OpenPositionResponse,
+  type SupportedTimeframe,
+  type StatsSummaryResponse,
+} from "@shared/types";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
@@ -427,6 +432,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
   });
 
   app.get("/stats/change", statsController.change);
+  app.get("/api/stats/change", statsController.change);
 
   const calculateSignalForPair = async (symbol: string, timeframe: string) => {
     const klines = await binanceService.getKlines(symbol, timeframe, 200);
@@ -569,6 +575,20 @@ export function registerRoutes(app: Express, deps: Deps): void {
       pnlUsd: pnlStr,
       openedAt,
       closedAt,
+    });
+
+    console.info(
+      `[trade] closed ${position.symbol} ${position.side} qty=${position.size} exit=${exitPriceStr} pnl=${pnlStr}`,
+    );
+    void telegramService.sendTradeNotification({
+      action: 'closed',
+      symbol: position.symbol,
+      side: position.side,
+      size: String(position.size ?? ''),
+      price: exitPriceStr,
+      pnl: pnlStr,
+      stopLoss: updated.stopLoss ?? undefined,
+      takeProfit: updated.takeProfit ?? undefined,
     });
 
     return { updated, closedRecord, pnlUsd: netPnl, exitPrice: exitPriceStr, feeUsd: feeStr };
@@ -721,10 +741,20 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/market-data", async (req, res) => {
     try {
       const symbols = req.query.symbols ? String(req.query.symbols).split(",") : undefined;
-      const data = await storage.getMarketData(symbols);
-      res.json(data);
+      const normalizedSymbols = symbols?.map((value) => value.trim()).filter((value) => value.length > 0);
+      const cacheKey = normalizedSymbols && normalizedSymbols.length > 0
+        ? `market-data:${normalizedSymbols.sort().join(",")}`
+        : "market-data:all";
+
+      const { value } = await cached(cacheKey, MICRO_CACHE_TTL_MS, async () => {
+        const data = await storage.getMarketData(normalizedSymbols);
+        return Array.isArray(data) ? data : [];
+      });
+
+      res.json(value);
     } catch (error) {
-      respondWithError(res, "GET /api/market-data", error, "Failed to fetch market data");
+      console.warn(`[market-data] fallback due to error: ${(error as Error).message ?? error}`);
+      res.json([]);
     }
   });
 
@@ -918,8 +948,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       if (!request.size && request.amountUsd) {
         const amountUsd = Number(request.amountUsd);
-        const lastPrice = getLastPrice(request.symbol);
+        const lastPrice = getPaperLastPrice(request.symbol);
         if (!lastPrice) {
+          void telegramService.sendNotification(
+            "❌ Failed to open position: No market price available for the selected symbol",
+          );
           return res.status(400).json({ message: "No market price available for the selected symbol" });
         }
 
@@ -939,6 +972,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
 
       if (!request.size) {
+        void telegramService.sendNotification("❌ Failed to open position: Position size could not be determined");
         return res.status(400).json({ message: "Position size could not be determined" });
       }
 
@@ -957,6 +991,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       });
 
       if (!order) {
+        void telegramService.sendNotification("❌ Failed to open position: Order execution failed");
         return res.status(400).json({ message: "Failed to execute trade" });
       }
 
@@ -976,6 +1011,10 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const result = await storage.createPosition(positionToSave);
 
+      console.info(
+        `[trade] opened ${result.symbol} ${result.side} qty=${result.size} entry=${result.entryPrice}`,
+      );
+
       await telegramService.sendTradeNotification({
         action: "opened",
         symbol: result.symbol,
@@ -989,6 +1028,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
       broadcast({ type: "position_opened", data: result });
       res.json(result);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void telegramService.sendNotification(`❌ Failed to open position: ${message}`);
       respondWithError(res, "POST /api/positions", error, "Failed to create position");
     }
   });
@@ -1011,10 +1052,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const { id } = req.params;
       const position = await storage.getPositionById(id);
       if (!position) {
+        void telegramService.sendNotification("❌ Failed to close position: Position not found");
         return res.status(404).json({ message: "Position not found" });
       }
 
-      const marketPrice = getLastPrice(position.symbol);
+      const marketPrice = getPaperLastPrice(position.symbol);
       const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
       const exitPrice = marketPrice ?? fallbackPrice;
 
@@ -1023,6 +1065,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
       broadcast({ type: "position_closed", data: updated });
       res.json(updated);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void telegramService.sendNotification(`❌ Failed to close position: ${message}`);
       respondWithError(res, "DELETE /api/positions/:id", error, "Failed to close position");
     }
   });
@@ -1034,7 +1078,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const closed: Position[] = [];
       for (const position of openPositions) {
-        const marketPrice = getLastPrice(position.symbol);
+        const marketPrice = getPaperLastPrice(position.symbol);
         const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
         const exitPrice = marketPrice ?? fallbackPrice;
         const { updated } = await closePositionAndRecord(position, exitPrice, 0);
@@ -1049,6 +1093,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
       broadcast({ type: "all_positions_closed", userId });
       res.json({ message: "All positions closed", count: closed.length });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void telegramService.sendNotification(`❌ Failed to close all positions: ${message}`);
       respondWithError(res, "POST /api/positions/:userId/close-all", error, "Failed to close all positions");
     }
   });
@@ -1058,11 +1104,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const payload = tradeCloseSchema.parse(req.body ?? {});
       const position = await storage.getPositionById(payload.positionId);
       if (!position) {
+        void telegramService.sendNotification("❌ Failed to close trade: Position not found");
         return res.status(404).json({ message: "Position not found" });
       }
 
       const providedPrice = parseNumeric(payload.exitPrice);
-      const marketPrice = getLastPrice(position.symbol);
+      const marketPrice = getPaperLastPrice(position.symbol);
       const fallbackPrice = parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
       const exitPrice = providedPrice ?? marketPrice ?? fallbackPrice;
       const feeUsd = parseNumeric(payload.feeUsd) ?? 0;
@@ -1072,15 +1119,32 @@ export function registerRoutes(app: Express, deps: Deps): void {
       broadcast({ type: "position_closed", data: updated });
       res.json(closedRecord);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void telegramService.sendNotification(`❌ Failed to close trade: ${message}`);
       respondWithError(res, "POST /api/trades/close", error, "Failed to close trade");
     }
   });
 
   app.get("/api/stats/summary", async (_req, res) => {
-    try {
-      const rows = await db.select().from(closedPositions);
+    const fallback: StatsSummaryResponse = {
+      totalTrades: 0,
+      winRate: 0,
+      avgRR: 0,
+      totalPnl: 0,
+      last30dPnl: 0,
+      balance: 0,
+      equity: 0,
+      openPnL: 0,
+    };
 
-      const computePnlUsd = (row: typeof rows[number]) => {
+    try {
+      const [closedRows, accountRows, openPositionRows] = await Promise.all([
+        db.select().from(closedPositions),
+        db.select().from(paperAccounts).limit(1),
+        db.select().from(positions).where(eq(positions.status, "OPEN")),
+      ]);
+
+      const computeClosedPnl = (row: (typeof closedRows)[number]) => {
         const entryPx = Number(row.entryPrice ?? 0);
         const exitPx = Number(row.exitPrice ?? 0);
         const size = Number(row.size ?? 0);
@@ -1095,16 +1159,16 @@ export function registerRoutes(app: Express, deps: Deps): void {
         return Number.isFinite(pnl) ? pnl : 0;
       };
 
-      const rowsWithPnl = rows.map((row) => ({ ...row, computedPnlUsd: computePnlUsd(row) }));
+      const closedWithPnl = closedRows.map((row) => ({ ...row, computedPnlUsd: computeClosedPnl(row) }));
 
-      const totalTrades = rowsWithPnl.length;
-      const totalPnl = rowsWithPnl.reduce((sum, row) => sum + row.computedPnlUsd, 0);
-      const winningTrades = rowsWithPnl.filter((row) => row.computedPnlUsd > 0).length;
+      const totalTrades = closedWithPnl.length;
+      const totalPnl = closedWithPnl.reduce((sum, row) => sum + row.computedPnlUsd, 0);
+      const winningTrades = closedWithPnl.filter((row) => row.computedPnlUsd > 0).length;
       const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
 
       let rewardSum = 0;
       let rewardCount = 0;
-      for (const row of rowsWithPnl) {
+      for (const row of closedWithPnl) {
         const entryPx = Number(row.entryPrice ?? 0);
         const exitPx = Number(row.exitPrice ?? 0);
         if (!Number.isFinite(entryPx) || entryPx === 0) {
@@ -1117,19 +1181,91 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const avgReward = rewardCount > 0 ? rewardSum / rewardCount : 0;
 
       const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const last30dPnl = rowsWithPnl
+      const last30dPnl = closedWithPnl
         .filter((row) => row.closedAt && new Date(row.closedAt) >= cutoff)
         .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
-      res.json({
+      const balanceRow = accountRows[0];
+      const balance = parseNumeric(balanceRow?.balance) ?? 0;
+
+      let openPnL = 0;
+      if (openPositionRows.length > 0) {
+        const symbolSet = new Set<string>();
+        openPositionRows.forEach((position) => {
+          if (position.symbol) {
+            symbolSet.add(String(position.symbol).toUpperCase());
+          }
+        });
+
+        const priceEntries = await Promise.all(
+          Array.from(symbolSet).map(async (symbol) => {
+            try {
+              const metric = await getMetricsLastPrice(symbol);
+              const price = Number.isFinite(metric.value) && metric.value > 0 ? metric.value : undefined;
+              return [symbol, price] as const;
+            } catch (error) {
+              console.warn(
+                `[stats] failed to resolve last price for ${symbol}: ${(error as Error).message ?? error}`,
+              );
+              return [symbol, undefined] as const;
+            }
+          }),
+        );
+
+        const priceMap = new Map<string, number>();
+        for (const [symbol, price] of priceEntries) {
+          if (price != null) {
+            priceMap.set(symbol, price);
+          }
+        }
+
+        for (const position of openPositionRows) {
+          const entry = parseNumeric(position.entryPrice) ?? 0;
+          const size = parseNumeric(position.size) ?? 0;
+          if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(size) || size <= 0) {
+            continue;
+          }
+
+          const normalizedSymbol = String(position.symbol ?? "").toUpperCase();
+          const markPrice = priceMap.get(normalizedSymbol);
+          const fallbackPrice = parseNumeric(position.currentPrice) ?? entry;
+          const price = Number.isFinite(markPrice ?? NaN) && (markPrice as number) > 0 ? (markPrice as number) : fallbackPrice;
+
+          const side = String(position.side ?? "").toUpperCase();
+          let positionPnl = 0;
+          if (side === "LONG") {
+            positionPnl = (price - entry) * size;
+          } else if (side === "SHORT") {
+            positionPnl = (entry - price) * size;
+          }
+
+          if (Number.isFinite(positionPnl)) {
+            openPnL += positionPnl;
+          }
+        }
+      }
+
+      if (!Number.isFinite(openPnL)) {
+        openPnL = 0;
+      }
+
+      const equity = balance + openPnL;
+
+      const payload: StatsSummaryResponse = {
         totalTrades,
         winRate,
-        avgRR: avgReward,
+        avgRR: Number.isFinite(avgReward) ? avgReward : 0,
         totalPnl,
         last30dPnl,
-      });
+        balance,
+        equity,
+        openPnL,
+      };
+
+      res.json(payload);
     } catch (error) {
-      respondWithError(res, "GET /api/stats/summary", error, "Failed to fetch statistics summary");
+      console.warn(`[stats] summary fallback due to error: ${(error as Error).message ?? error}`);
+      res.json(fallback);
     }
   });
 

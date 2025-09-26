@@ -1,3 +1,5 @@
+import { TELEGRAM_ENABLED } from "../../src/config/env";
+
 export interface TradeNotification {
   action: 'opened' | 'closed' | 'updated';
   symbol: string;
@@ -17,6 +19,10 @@ export class TelegramService {
     // Initialize with environment variables if available
     this.botToken = process.env.TELEGRAM_BOT_TOKEN || '';
     this.chatId = process.env.TELEGRAM_CHAT_ID || '';
+  }
+
+  private isEnabled(): boolean {
+    return TELEGRAM_ENABLED && Boolean(this.botToken && this.chatId);
   }
 
   updateCredentials(botToken: string, chatId: string) {
@@ -55,6 +61,10 @@ export class TelegramService {
 
   async sendNotification(message: string): Promise<boolean> {
     try {
+      if (!this.isEnabled()) {
+        return false;
+      }
+
       if (!this.botToken || !this.chatId) {
         console.error('Telegram credentials not configured');
         return false;

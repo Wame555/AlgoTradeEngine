@@ -25,10 +25,17 @@ import { DEFAULT_TIMEFRAMES, initializeMetrics } from "./services/metrics";
 import { configureLogging } from "./utils/logger";
 import { errorHandler } from "./middleware/errorHandler";
 import { CONFIGURED_SYMBOLS } from "./config/symbols";
-import { FUTURES, RUN_MIGRATIONS_ON_START } from "../src/config/env";
+import { FUTURES, RUN_MIGRATIONS_ON_START, BACKFILL_ON_START, BACKFILL_MIN_CANDLES } from "../src/config/env";
 import { runAutoheal } from "../scripts/migrate/autoheal";
 import { bootstrapMarketCaches } from "./services/cacheBootstrap";
-import { getHealthSnapshot, markCacheReady, markSymbolsConfigured, markWsStatus, resetHealthState } from "./state/systemHealth";
+import {
+    getHealthSnapshot,
+    getBackfillSnapshot,
+    markCacheReady,
+    markSymbolsConfigured,
+    markWsStatus,
+    resetHealthState,
+} from "./state/systemHealth";
 
 configureLogging();
 
@@ -94,6 +101,27 @@ app.get("/healthz", async (_req, res) => {
     const snapshot = getHealthSnapshot();
     const healthy = dbHealthy && snapshot.ws && snapshot.cache;
     res.status(healthy ? 200 : 503).json({ db: dbHealthy, ws: snapshot.ws, cache: snapshot.cache, symbols: snapshot.symbols });
+});
+
+app.get("/healthz/details", async (_req, res) => {
+    let hasDb = false;
+    try {
+        const result = await pool.query("SELECT 1;");
+        hasDb = Boolean(result.rowCount);
+    } catch (error) {
+        console.warn(`[healthz] details database check failed: ${(error as Error).message ?? error}`);
+        hasDb = false;
+    }
+
+    const snapshot = getHealthSnapshot();
+    const backfill = getBackfillSnapshot();
+
+    res.status(200).json({
+        hasDb,
+        hasWs: snapshot.ws,
+        backfill,
+        symbols: configuredSymbols,
+    });
 });
 
 const httpServer = createServer(app);
@@ -163,17 +191,25 @@ wss.on("connection", (ws) => {
         }
     }
 
-    if (shouldRunMigrations) {
-        if (!FUTURES) {
-            console.info("[backfill] FUTURES flag disabled. Skipping startup backfill.");
-        } else if (configuredSymbols.length === 0) {
-            console.warn("[backfill] Skipping startup backfill because SYMBOL_LIST is empty.");
-        } else {
+    const shouldTriggerBackfill = BACKFILL_ON_START && FUTURES && configuredSymbols.length > 0;
+    if (shouldTriggerBackfill) {
+        console.info(
+            `[backfill] scheduling background backfill for ${configuredSymbols.length} symbols × ${BackfillTimeframes.length} timeframes (min ${BACKFILL_MIN_CANDLES})`,
+        );
+        void (async () => {
             try {
                 await runFuturesBackfill();
             } catch (backfillError) {
                 console.warn("[backfill] Startup backfill encountered an error", backfillError);
             }
+        })();
+    } else {
+        if (!BACKFILL_ON_START) {
+            console.info("[backfill] BACKFILL_ON_START is false. Skipping startup backfill.");
+        } else if (!FUTURES) {
+            console.info("[backfill] FUTURES flag disabled. Skipping startup backfill.");
+        } else if (configuredSymbols.length === 0) {
+            console.warn("[backfill] Skipping startup backfill because SYMBOL_LIST is empty.");
         }
     }
 

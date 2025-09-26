@@ -44,3 +44,14 @@ export interface OpenPositionResponse {
   partialData?: boolean;
   partialDataByTimeframe?: Record<SupportedTimeframe, boolean>;
 }
+
+export interface StatsSummaryResponse {
+  totalTrades: number;
+  winRate: number;
+  avgRR: number;
+  totalPnl: number;
+  last30dPnl: number;
+  balance: number;
+  equity: number;
+  openPnL: number;
+}

@@ -53,10 +53,23 @@ export function useClosedPositions(symbol?: string, limit: number = 50, offset: 
 }
 
 export function useStatsSummary() {
+  const defaultSummary: StatsSummary = {
+    totalTrades: 0,
+    winRate: 0,
+    avgRR: 0,
+    totalPnl: 0,
+    last30dPnl: 0,
+    balance: 0,
+    equity: 0,
+    openPnL: 0,
+  };
+
   return useQuery<StatsSummary>({
     queryKey: ['/api/stats/summary'],
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
+    placeholderData: () => defaultSummary,
+    initialData: defaultSummary,
   });
 }
 

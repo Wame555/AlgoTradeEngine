@@ -2,7 +2,7 @@ import "dotenv/config";
 
 const BASE_URL = "https://fapi.binance.com";
 
-const RETRY_DELAYS_MS = [250, 500, 1000] as const;
+const RETRY_DELAYS_MS = [500, 1000, 2000] as const;
 const MAX_ATTEMPTS = 3;
 
 export type FuturesTimeframe =

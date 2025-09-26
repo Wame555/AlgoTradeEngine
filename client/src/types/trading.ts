@@ -1,4 +1,9 @@
-import type { OpenPositionResponse, StatsChangeResponse, SupportedTimeframe } from '@shared/types';
+import type {
+  OpenPositionResponse,
+  StatsChangeResponse,
+  StatsSummaryResponse,
+  SupportedTimeframe,
+} from '@shared/types';
 import { SUPPORTED_TIMEFRAMES as SHARED_SUPPORTED_TIMEFRAMES } from '@shared/types';
 import { TIMEFRAMES } from '@/constants/timeframes';
 
@@ -111,13 +116,7 @@ export interface AccountSnapshot {
   marginUsed: number;
 }
 
-export interface StatsSummary {
-  totalTrades: number;
-  winRate: number;
-  avgRR: number;
-  totalPnl: number;
-  last30dPnl: number;
-}
+export type StatsSummary = StatsSummaryResponse;
 
 export type StatsChange = StatsChangeResponse;
 
