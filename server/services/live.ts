@@ -4,6 +4,8 @@ import { bulkUpsertCandles, type MarketDataUpsert } from "../db/marketData";
 import { BackfillTimeframes } from "./backfill";
 import { getLastPrice, setLastPrice, setPrevClose } from "../state/marketCache";
 import { CONFIGURED_SYMBOLS } from "../config/symbols";
+import { aggregateYearly } from "./metrics";
+import { markWsStatus } from "../state/systemHealth";
 
 const WS_BASE_URL = "wss://fstream.binance.com/stream?streams=";
 const KEEPALIVE_INTERVAL_MS = 25_000;
@@ -11,6 +13,7 @@ const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 const FLUSH_INTERVAL_MS = 100;
 const MAX_BATCH_SIZE = 500;
+const PING_TIMEOUT_MS = KEEPALIVE_INTERVAL_MS * 2;
 
 const TIMEFRAMES = BackfillTimeframes;
 
@@ -60,6 +63,8 @@ export function startLiveFuturesStream(): void {
   let messageCounter = 0;
   let flushTimer: NodeJS.Timeout | null = null;
   let flushInProgress = false;
+  let awaitingPong = false;
+  let lastPongAt = Date.now();
 
   const pendingCandles: PendingCandle[] = [];
 
@@ -73,6 +78,7 @@ export function startLiveFuturesStream(): void {
       socket.removeAllListeners();
       socket = null;
     }
+    awaitingPong = false;
   }
 
   async function flushQueue(): Promise<void> {
@@ -194,6 +200,11 @@ export function startLiveFuturesStream(): void {
         if (!Number.isFinite(getLastPrice(symbol) ?? NaN)) {
           setLastPrice(symbol, closePrice);
         }
+        if (timeframe === "1M") {
+          const candleDate = new Date(openTime);
+          const year = candleDate.getUTCFullYear();
+          void aggregateYearly(symbol, year);
+        }
       }
     } catch (error) {
       console.warn(
@@ -236,7 +247,10 @@ export function startLiveFuturesStream(): void {
   function connect(): void {
     cleanupSocket();
 
+    markWsStatus("connecting");
     socket = new WebSocket(url);
+    awaitingPong = false;
+    lastPongAt = Date.now();
 
     socket.on("open", () => {
       reconnectAttempts = 0;
@@ -250,6 +264,14 @@ export function startLiveFuturesStream(): void {
       }
       pingTimer = setInterval(() => {
         if (socket && socket.readyState === WebSocket.OPEN) {
+          const now = Date.now();
+          if (awaitingPong && now - lastPongAt > PING_TIMEOUT_MS) {
+            console.warn(`[live] ws ping timeout after ${now - lastPongAt}ms; terminating connection`);
+            awaitingPong = false;
+            socket.terminate();
+            return;
+          }
+          awaitingPong = true;
           socket.ping();
         }
       }, KEEPALIVE_INTERVAL_MS);
@@ -264,6 +286,7 @@ export function startLiveFuturesStream(): void {
           `[live] ws connected (symbols=${symbolCount}, timeframes=${timeframeCount}, streams=${streams})`,
         );
       }
+      markWsStatus("connected");
     });
 
     socket.on("message", (raw: WebSocket.RawData) => {
@@ -280,14 +303,21 @@ export function startLiveFuturesStream(): void {
 
     socket.on("close", () => {
       cleanupSocket();
+      markWsStatus("disconnected");
       scheduleReconnect();
     });
 
     socket.on("error", (err) => {
       console.warn(`[live] ws error: ${(err as Error).message ?? err}`);
+      markWsStatus("disconnected");
       if (socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
         socket.terminate();
       }
+    });
+
+    socket.on("pong", () => {
+      awaitingPong = false;
+      lastPongAt = Date.now();
     });
   }
 

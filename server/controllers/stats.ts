@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { and, eq } from "drizzle-orm";
 
-import { cached, DEFAULT_CACHE_TTL_MS } from "../cache/apiCache";
+import { cached, MICRO_CACHE_TTL_MS } from "../cache/apiCache";
 import { db } from "../db";
 import { positions } from "@shared/schema";
 import {
@@ -9,8 +9,7 @@ import {
   type StatsChangeResponse,
   type SupportedTimeframe,
 } from "@shared/types";
-import { getLastPrice } from "../state/marketCache";
-import { getPrevClose, getChangePct, getPnlForPosition } from "../services/metrics";
+import { getPrevClose, getLastPrice, getPnlForPosition } from "../services/metrics";
 import { CONFIGURED_SYMBOL_SET } from "../config/symbols";
 
 const TIMEFRAME_SET = new Set<SupportedTimeframe>(SUPPORTED_TIMEFRAMES);
@@ -30,6 +29,7 @@ function buildFallback(
     lastPrice: 0,
     changePct: 0,
     pnlUsdForOpenPositionsBySymbol: 0,
+    partialData: true,
   };
 }
 
@@ -57,18 +57,24 @@ export async function change(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    const { value, cacheHit } = await cached(cacheKey, DEFAULT_CACHE_TTL_MS, async () => {
+    const { value, cacheHit } = await cached(cacheKey, MICRO_CACHE_TTL_MS, async () => {
       try {
-        const [prevCloseRaw, changePctRaw] = await Promise.all([
+        const [prevCloseResult, lastPriceResult] = await Promise.all([
           getPrevClose(symbol, timeframe),
-          getChangePct(symbol, timeframe),
+          getLastPrice(symbol),
         ]);
 
-        const lastPriceRaw = getLastPrice(symbol);
-        const prevClose = Number.isFinite(prevCloseRaw) ? prevCloseRaw : 0;
-        const lastPrice =
-          typeof lastPriceRaw === "number" && Number.isFinite(lastPriceRaw) ? lastPriceRaw : 0;
-        const changePct = Number.isFinite(changePctRaw) ? changePctRaw : 0;
+        const prevClose = Number.isFinite(prevCloseResult.value) ? prevCloseResult.value : 0;
+        const lastPrice = Number.isFinite(lastPriceResult.value) ? lastPriceResult.value : 0;
+
+        let partialData = prevCloseResult.partialData || lastPriceResult.partialData;
+
+        let changePct = 0;
+        if (prevClose > 0 && lastPrice > 0) {
+          changePct = ((lastPrice - prevClose) / prevClose) * 100;
+        } else {
+          partialData = true;
+        }
 
         const openPositions = await db
           .select()
@@ -78,9 +84,12 @@ export async function change(req: Request, res: Response): Promise<void> {
         let pnlTotal = 0;
         for (const position of openPositions) {
           try {
-            const pnl = await getPnlForPosition(position, timeframe);
-            if (Number.isFinite(pnl)) {
-              pnlTotal += pnl;
+            const pnlResult = await getPnlForPosition(position, timeframe);
+            if (Number.isFinite(pnlResult.value)) {
+              pnlTotal += pnlResult.value;
+            }
+            if (pnlResult.partialData) {
+              partialData = true;
             }
           } catch {
             // ignore individual position errors
@@ -96,6 +105,7 @@ export async function change(req: Request, res: Response): Promise<void> {
           lastPrice,
           changePct,
           pnlUsdForOpenPositionsBySymbol,
+          partialData,
         } satisfies StatsChangeResponse;
       } catch (error) {
         console.warn(

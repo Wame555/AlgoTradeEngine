@@ -5,7 +5,8 @@ interface CacheEntry<T> {
 
 const store = new Map<string, CacheEntry<unknown>>();
 
-export const DEFAULT_CACHE_TTL_MS = 1500;
+export const MICRO_CACHE_TTL_MS = 1500;
+export const DEFAULT_CACHE_TTL_MS = MICRO_CACHE_TTL_MS;
 
 export async function cached<T>(
   key: string,

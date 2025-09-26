@@ -129,6 +129,7 @@ export interface ChangeStats {
   lastPrice: number;
   changePct: number;
   pnlUsdForOpenPositionsBySymbol: number;
+  partialData?: boolean;
 }
 
 export interface PriceUpdate {
