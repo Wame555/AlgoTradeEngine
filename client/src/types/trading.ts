@@ -70,6 +70,7 @@ export interface MarketData {
 export interface IndicatorConfig {
   id: string;
   name: string;
+  type: string;
   payload: Record<string, unknown>;
   createdAt: string;
 }

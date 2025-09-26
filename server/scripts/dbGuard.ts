@@ -541,6 +541,9 @@ async function ensureIndicatorConfigsArtifacts(client: PgClient): Promise<void> 
   await ensureColumnDefault(client, "indicator_configs", "payload", "'{}'::jsonb");
   await ensureColumn(client, "indicator_configs", "created_at", "timestamptz DEFAULT now()");
   await ensureColumnDefault(client, "indicator_configs", "created_at", "now()");
+  await ensureColumn(client, "indicator_configs", "type", "text DEFAULT 'GENERIC'");
+  await ensureColumnDefault(client, "indicator_configs", "type", "'GENERIC'");
+  await ensureNotNull(client, "indicator_configs", "type");
 
   await ensureIndex(client, {
     table: "indicator_configs",

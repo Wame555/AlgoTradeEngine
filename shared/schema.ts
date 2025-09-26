@@ -81,6 +81,7 @@ export const indicatorConfigs = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     userId: uuid("user_id").notNull(),
     name: text("name").notNull(),
+    type: text("type").notNull().default('GENERIC'),
     payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
     createdAt: timestamp("created_at").defaultNow(),
   },
@@ -205,7 +206,9 @@ export const insertUserSettingsSchema = createInsertSchema(userSettings).omit({
   updatedAt: true,
 });
 
-export const insertIndicatorConfigSchema = createInsertSchema(indicatorConfigs).omit({
+export const insertIndicatorConfigSchema = createInsertSchema(indicatorConfigs, {
+  type: z.string().min(1).default('GENERIC'),
+}).omit({
   id: true,
   createdAt: true,
 });

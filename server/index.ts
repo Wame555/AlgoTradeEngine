@@ -28,19 +28,21 @@ import { CONFIGURED_SYMBOLS } from "./config/symbols";
 import { FUTURES, RUN_MIGRATIONS_ON_START } from "../src/config/env";
 import { runAutoheal } from "../scripts/migrate/autoheal";
 import { bootstrapMarketCaches } from "./services/cacheBootstrap";
-import { getHealthSnapshot, markCacheReady, markWsStatus, resetHealthState } from "./state/systemHealth";
+import { getHealthSnapshot, markCacheReady, markSymbolsConfigured, markWsStatus, resetHealthState } from "./state/systemHealth";
 
 configureLogging();
 
 const environment = (process.env.NODE_ENV ?? "development").toLowerCase();
 const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
 const configuredSymbols = [...CONFIGURED_SYMBOLS];
+const hasConfiguredSymbols = configuredSymbols.length > 0;
 const migrationsRequired = environment === "production";
 const shouldRunMigrations = RUN_MIGRATIONS_ON_START || migrationsRequired;
 
 resetHealthState();
 markCacheReady(false);
 markWsStatus(FUTURES ? "disconnected" : "disabled");
+markSymbolsConfigured(hasConfiguredSymbols);
 
 console.info(`[startup] environment=${environment}`);
 console.info(
@@ -49,7 +51,7 @@ console.info(
     }`,
 );
 console.info(`[startup] FUTURES=${FUTURES ? "true" : "false"}`);
-if (configuredSymbols.length === 0) {
+if (!hasConfiguredSymbols) {
     console.warn("[startup] SYMBOL_LIST is empty. Stats endpoints will return fallback values.");
 } else {
     console.info(`[startup] SYMBOL_LIST loaded (${configuredSymbols.length}): ${configuredSymbols.join(", ")}`);
@@ -91,7 +93,7 @@ app.get("/healthz", async (_req, res) => {
 
     const snapshot = getHealthSnapshot();
     const healthy = dbHealthy && snapshot.ws && snapshot.cache;
-    res.status(healthy ? 200 : 503).json({ db: dbHealthy, ws: snapshot.ws, cache: snapshot.cache });
+    res.status(healthy ? 200 : 503).json({ db: dbHealthy, ws: snapshot.ws, cache: snapshot.cache, symbols: snapshot.symbols });
 });
 
 const httpServer = createServer(app);
@@ -184,7 +186,9 @@ wss.on("connection", (ws) => {
             console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
             markCacheReady(true);
             markWsStatus("disabled");
+            markSymbolsConfigured(false);
         } else {
+            markSymbolsConfigured(true);
             let cacheReady = false;
             try {
                 const bootstrap = await bootstrapMarketCaches(futuresSymbols, BackfillTimeframes);
