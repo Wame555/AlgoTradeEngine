@@ -22,12 +22,13 @@ import { ensureSchema } from "./db/guards";
 import { runFuturesBackfill, BackfillTimeframes } from "./services/backfill";
 import { startLiveFuturesStream } from "./services/live";
 import { DEFAULT_TIMEFRAMES, initializeMetrics } from "./services/metrics";
-import { primePrevCloseCaches } from "./state/marketCache";
 import { configureLogging } from "./utils/logger";
 import { errorHandler } from "./middleware/errorHandler";
 import { CONFIGURED_SYMBOLS } from "./config/symbols";
 import { FUTURES, RUN_MIGRATIONS_ON_START } from "../src/config/env";
 import { runAutoheal } from "../scripts/migrate/autoheal";
+import { bootstrapMarketCaches } from "./services/cacheBootstrap";
+import { getHealthSnapshot, markCacheReady, markWsStatus, resetHealthState } from "./state/systemHealth";
 
 configureLogging();
 
@@ -36,6 +37,10 @@ const shouldLogRequests = (process.env.EXPRESS_DEBUG ?? "false") === "true";
 const configuredSymbols = [...CONFIGURED_SYMBOLS];
 const migrationsRequired = environment === "production";
 const shouldRunMigrations = RUN_MIGRATIONS_ON_START || migrationsRequired;
+
+resetHealthState();
+markCacheReady(false);
+markWsStatus(FUTURES ? "disconnected" : "disabled");
 
 console.info(`[startup] environment=${environment}`);
 console.info(
@@ -73,6 +78,21 @@ if (shouldLogRequests) {
     app.use(requestLogger);
 }
 app.use(express.json());
+
+app.get("/healthz", async (_req, res) => {
+    let dbHealthy = false;
+    try {
+        const result = await pool.query("SELECT 1;");
+        dbHealthy = Boolean(result.rowCount);
+    } catch (error) {
+        console.warn(`[healthz] database check failed: ${(error as Error).message ?? error}`);
+        dbHealthy = false;
+    }
+
+    const snapshot = getHealthSnapshot();
+    const healthy = dbHealthy && snapshot.ws && snapshot.cache;
+    res.status(healthy ? 200 : 503).json({ db: dbHealthy, ws: snapshot.ws, cache: snapshot.cache });
+});
 
 const httpServer = createServer(app);
 
@@ -162,23 +182,34 @@ wss.on("connection", (ws) => {
     if (futuresEnabled) {
         if (futuresSymbols.length === 0) {
             console.warn("[live] SYMBOL_LIST is empty. Skipping futures live stream startup.");
+            markCacheReady(true);
+            markWsStatus("disabled");
         } else {
+            let cacheReady = false;
             try {
-                const primedCounts = await primePrevCloseCaches(futuresSymbols, BackfillTimeframes);
-                for (const timeframe of BackfillTimeframes) {
-                    const primed = primedCounts[timeframe] ?? 0;
-                    console.info(`[live] prevClose cache primed ${timeframe}:${primed}`);
-                }
+                const bootstrap = await bootstrapMarketCaches(futuresSymbols, BackfillTimeframes);
+                const totalPrimed = Object.values(bootstrap.prevClosePrimed).reduce(
+                    (sum, value) => sum + (Number.isFinite(value) ? Number(value) : 0),
+                    0,
+                );
+                console.info(
+                    `[bootstrap] prevClose primed=${totalPrimed} lastPrice primed=${bootstrap.lastPricePrimed} yearly aggregated=${bootstrap.yearlyAggregates}`,
+                );
+                cacheReady = bootstrap.ready;
             } catch (cacheError) {
+                cacheReady = false;
                 console.warn(
-                    `[live] failed to prime prevClose caches: ${(cacheError as Error).message ?? cacheError}`,
+                    `[bootstrap] cache priming failed: ${(cacheError as Error).message ?? cacheError}`,
                 );
             }
 
+            markCacheReady(cacheReady);
             startLiveFuturesStream();
         }
     } else {
         console.info("[live] FUTURES flag is false. Skipping futures live stream startup.");
+        markCacheReady(true);
+        markWsStatus("disabled");
     }
 
     // Broker kiválasztás (alapértelmezetten paper mód)

@@ -20,6 +20,7 @@ export interface StatsChangeResponse {
   lastPrice: number;
   changePct: number;
   pnlUsdForOpenPositionsBySymbol: number;
+  partialData?: boolean;
 }
 
 export interface OpenPositionResponse {
@@ -40,4 +41,6 @@ export interface OpenPositionResponse {
   closedAt?: string;
   changePctByTimeframe: Record<SupportedTimeframe, number>;
   pnlByTimeframe: Record<SupportedTimeframe, number>;
+  partialData?: boolean;
+  partialDataByTimeframe?: Record<SupportedTimeframe, boolean>;
 }

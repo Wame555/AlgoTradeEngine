@@ -1,7 +1,8 @@
 import { pool } from "../db";
 import {
-  getLastPrice,
+  getLastPrice as getCachedLastPrice,
   getPrevCloseFromCache,
+  setLastPrice,
   setPrevClose,
 } from "../state/marketCache";
 import { CONFIGURED_SYMBOL_SET } from "../config/symbols";
@@ -22,6 +23,11 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+}
+
+export interface MetricValue {
+  value: number;
+  partialData: boolean;
 }
 
 const fallbackCounters = new Map<string, { count: number; warned: boolean }>();
@@ -55,6 +61,30 @@ function safeNumber(value: unknown): number {
   }
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildMetric(value: number, partialData: boolean): MetricValue {
+  const numeric = Number.isFinite(value) ? value : 0;
+  return { value: numeric, partialData };
+}
+
+async function fetchLastPriceFromDb(symbol: string): Promise<number> {
+  try {
+    const query =
+      'SELECT "close" FROM public."market_data" WHERE "symbol" = $1 ORDER BY "ts" DESC LIMIT 1;';
+    const result = await pool.query(query, [normalizeSymbol(symbol)]);
+    if (result.rowCount && result.rows[0]) {
+      const close = safeNumber(result.rows[0]?.close);
+      if (close > 0) {
+        return close;
+      }
+    }
+  } catch (error) {
+    console.warn(
+      `[metrics] failed to load last price from db for ${symbol}: ${(error as Error).message ?? error}`,
+    );
+  }
+  return 0;
 }
 
 async function fetchPrevCloseFromDb(symbol: string, timeframe: string): Promise<number> {
@@ -187,23 +217,47 @@ export async function aggregateYearly(symbol: string, year: number): Promise<Can
   }
 }
 
-export async function getPrevClose(symbol: string, timeframe: string): Promise<number> {
+export async function getLastPrice(symbol: string): Promise<MetricValue> {
   const normalized = normalizeSymbol(symbol);
   if (CONFIGURED_SYMBOL_SET.size > 0 && !CONFIGURED_SYMBOL_SET.has(normalized)) {
-    return 0;
+    return buildMetric(0, true);
   }
+
+  const cached = getCachedLastPrice(normalized);
+  if (typeof cached === "number" && Number.isFinite(cached) && cached > 0) {
+    return buildMetric(cached, false);
+  }
+
+  const fallback = await fetchLastPriceFromDb(normalized);
+  if (fallback > 0) {
+    setLastPrice(normalized, fallback);
+    return buildMetric(fallback, false);
+  }
+
+  return buildMetric(0, true);
+}
+
+export async function getPrevClose(symbol: string, timeframe: string): Promise<MetricValue> {
+  const normalized = normalizeSymbol(symbol);
+  if (CONFIGURED_SYMBOL_SET.size > 0 && !CONFIGURED_SYMBOL_SET.has(normalized)) {
+    return buildMetric(0, true);
+  }
+
   const cached = getPrevCloseFromCache(normalized, timeframe);
-  if (typeof cached === "number") {
-    return cached;
+  if (typeof cached === "number" && Number.isFinite(cached)) {
+    if (cached > 0) {
+      return buildMetric(cached, false);
+    }
+    if (cached === 0) {
+      return buildMetric(0, true);
+    }
   }
 
-  trackFallback(normalized, timeframe);
   let close = await fetchPrevCloseFromDb(normalized, timeframe);
-
   if (close > 0) {
     setPrevClose(normalized, timeframe, close);
     resetFallbackCounter(normalized, timeframe);
-    return close;
+    return buildMetric(close, false);
   }
 
   if (timeframe === "1y") {
@@ -213,70 +267,77 @@ export async function getPrevClose(symbol: string, timeframe: string): Promise<n
       close = yearlyCandle.close;
       setPrevClose(normalized, timeframe, close);
       resetFallbackCounter(normalized, timeframe);
-      return close;
+      return buildMetric(close, false);
     }
   }
 
+  trackFallback(normalized, timeframe);
   setPrevClose(normalized, timeframe, 0);
-  return 0;
+  return buildMetric(0, true);
 }
 
-export async function getChangePct(symbol: string, timeframe: string): Promise<number> {
+export async function getChangePct(symbol: string, timeframe: string): Promise<MetricValue> {
   const prev = await getPrevClose(symbol, timeframe);
-  if (!Number.isFinite(prev) || prev <= 0) {
-    return 0;
+  const last = await getLastPrice(symbol);
+
+  if (!Number.isFinite(prev.value) || prev.value <= 0) {
+    return buildMetric(0, true);
   }
 
-  const lastValue = getLastPrice(symbol);
-  if (typeof lastValue !== "number" || !Number.isFinite(lastValue)) {
-    return 0;
+  if (!Number.isFinite(last.value) || last.value <= 0) {
+    return buildMetric(0, true);
   }
 
-  const last = lastValue;
-  return ((last - prev) / prev) * 100;
+  const change = ((last.value - prev.value) / prev.value) * 100;
+  const partialData = prev.partialData || last.partialData;
+  return buildMetric(change, partialData);
 }
 
-export async function getPnlForPosition(position: Position, timeframe: string): Promise<number> {
+export async function getPnlForPosition(position: Position, timeframe: string): Promise<MetricValue> {
   const prev = await getPrevClose(position.symbol, timeframe);
-  if (!Number.isFinite(prev) || prev <= 0) {
-    return 0;
+  const last = await getLastPrice(position.symbol);
+
+  if (!Number.isFinite(prev.value) || prev.value <= 0) {
+    return buildMetric(0, true);
   }
 
-  const lastValue = getLastPrice(position.symbol);
-  if (typeof lastValue !== "number" || !Number.isFinite(lastValue)) {
-    return 0;
+  if (!Number.isFinite(last.value) || last.value <= 0) {
+    return buildMetric(0, true);
   }
 
-  const last = lastValue;
   const qty = safeNumber(position.size);
   if (!Number.isFinite(qty) || qty <= 0) {
-    return 0;
+    return buildMetric(0, true);
   }
 
   const side = String(position.side ?? "").toUpperCase();
   if (side !== "LONG" && side !== "SHORT") {
-    return 0;
+    return buildMetric(0, true);
   }
 
-  if (side === "LONG") {
-    return (last - prev) * qty;
-  }
+  const value = side === "LONG"
+    ? (last.value - prev.value) * qty
+    : (prev.value - last.value) * qty;
 
-  return (prev - last) * qty;
+  const partialData = prev.partialData || last.partialData;
+  return buildMetric(value, partialData);
 }
 
 export async function getPnlByTimeframes(
   position: Position,
   timeframes: readonly string[] = DEFAULT_TIMEFRAMES,
-): Promise<Record<string, number>> {
-  const result: Record<string, number> = {};
+): Promise<Record<string, MetricValue>> {
+  const result: Record<string, MetricValue> = {};
   const frames = timeframes.length > 0 ? timeframes : DEFAULT_TIMEFRAMES;
 
   for (const frame of frames) {
     try {
       result[frame] = await getPnlForPosition(position, frame);
-    } catch {
-      result[frame] = 0;
+    } catch (error) {
+      console.warn(
+        `[metrics] failed to compute pnl for position ${String(position.id ?? '')} ${frame}: ${(error as Error).message ?? error}`,
+      );
+      result[frame] = buildMetric(0, true);
     }
   }
 

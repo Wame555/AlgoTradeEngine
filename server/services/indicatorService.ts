@@ -11,17 +11,34 @@ export interface CombinedSignal {
 }
 
 export class IndicatorService {
-  
+
+  private sanitizePrices(prices: number[] | undefined | null): number[] {
+    if (!Array.isArray(prices)) {
+      return [];
+    }
+
+    const sanitized: number[] = [];
+    for (const value of prices) {
+      const numeric = typeof value === 'number' ? value : Number(value ?? 0);
+      if (Number.isFinite(numeric)) {
+        sanitized.push(numeric);
+      }
+    }
+
+    return sanitized;
+  }
+
   calculateRSI(prices: number[], period: number = 14): IndicatorResult {
-    if (prices.length < period + 1) {
+    const normalized = this.sanitizePrices(prices);
+    if (normalized.length < period + 1) {
       return { value: 50, signal: 'WAIT', confidence: 0 };
     }
 
     const gains: number[] = [];
     const losses: number[] = [];
 
-    for (let i = 1; i < prices.length; i++) {
-      const diff = prices[i] - prices[i - 1];
+    for (let i = 1; i < normalized.length; i++) {
+      const diff = normalized[i] - normalized[i - 1];
       gains.push(diff > 0 ? diff : 0);
       losses.push(diff < 0 ? Math.abs(diff) : 0);
     }
@@ -53,12 +70,13 @@ export class IndicatorService {
   }
 
   calculateMACD(prices: number[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9): IndicatorResult {
-    if (prices.length < slowPeriod + signalPeriod) {
+    const normalized = this.sanitizePrices(prices);
+    if (normalized.length < slowPeriod + signalPeriod) {
       return { value: 0, signal: 'WAIT', confidence: 0 };
     }
 
-    const fastEMA = this.calculateEMA(prices, fastPeriod);
-    const slowEMA = this.calculateEMA(prices, slowPeriod);
+    const fastEMA = this.calculateEMA(normalized, fastPeriod);
+    const slowEMA = this.calculateEMA(normalized, slowPeriod);
 
     const macdSeries = fastEMA.map((value, index) => value - slowEMA[index]);
     const macdLine = macdSeries[macdSeries.length - 1];
@@ -81,19 +99,20 @@ export class IndicatorService {
   }
 
   calculateMA(prices: number[], period: number = 20, type: 'SMA' | 'EMA' = 'SMA'): IndicatorResult {
-    if (prices.length < period) {
+    const normalized = this.sanitizePrices(prices);
+    if (normalized.length < period) {
       return { value: 0, signal: 'WAIT', confidence: 0 };
     }
 
     let ma: number;
     if (type === 'SMA') {
-      ma = prices.slice(-period).reduce((sum, price) => sum + price, 0) / period;
+      ma = normalized.slice(-period).reduce((sum, price) => sum + price, 0) / period;
     } else {
-      const ema = this.calculateEMA(prices, period);
+      const ema = this.calculateEMA(normalized, period);
       ma = ema[ema.length - 1];
     }
 
-    const currentPrice = prices[prices.length - 1];
+    const currentPrice = normalized[normalized.length - 1];
     const priceAboveMA = currentPrice > ma;
     const distance = Math.abs(currentPrice - ma) / ma;
 
@@ -110,21 +129,22 @@ export class IndicatorService {
   }
 
   calculateBollingerBands(prices: number[], period: number = 20, multiplier: number = 2): IndicatorResult {
-    if (prices.length < period) {
+    const normalized = this.sanitizePrices(prices);
+    if (normalized.length < period) {
       return { value: 0, signal: 'WAIT', confidence: 0 };
     }
 
-    const recentPrices = prices.slice(-period);
+    const recentPrices = normalized.slice(-period);
     const sma = recentPrices.reduce((sum, price) => sum + price, 0) / period;
-    
+
     const variance = recentPrices.reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
     const stdDev = Math.sqrt(variance);
-    
+
     const upperBand = sma + (multiplier * stdDev);
     const lowerBand = sma - (multiplier * stdDev);
-    
-    const currentPrice = prices[prices.length - 1];
-    
+
+    const currentPrice = normalized[normalized.length - 1];
+
     let signal: 'LONG' | 'SHORT' | 'WAIT' = 'WAIT';
     let confidence = 0;
 
@@ -140,11 +160,15 @@ export class IndicatorService {
   }
 
   private calculateEMA(prices: number[], period: number): number[] {
+    const normalized = this.sanitizePrices(prices);
+    if (normalized.length === 0) {
+      return [];
+    }
     const k = 2 / (period + 1);
-    const emaArray: number[] = [prices[0]];
+    const emaArray: number[] = [normalized[0]];
 
-    for (let i = 1; i < prices.length; i++) {
-      const ema = (prices[i] * k) + (emaArray[i - 1] * (1 - k));
+    for (let i = 1; i < normalized.length; i++) {
+      const ema = (normalized[i] * k) + (emaArray[i - 1] * (1 - k));
       emaArray.push(ema);
     }
 

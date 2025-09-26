@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { cached, DEFAULT_CACHE_TTL_MS } from "./cache/apiCache";
+import { cached, MICRO_CACHE_TTL_MS } from "./cache/apiCache";
 import { and, desc, eq } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
@@ -802,36 +802,48 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const userId = await resolveUserId(req.query.userId);
       const { value: positions } = await cached<OpenPositionResponse[]>(
         "positions:open",
-        DEFAULT_CACHE_TTL_MS,
+        MICRO_CACHE_TTL_MS,
         async () => {
           const basePositions = await storage.getOpenPositions(userId);
 
           const enriched = await Promise.all(
             basePositions.map(async (position) => {
               const changePctByTimeframe = {} as Record<SupportedTimeframe, number>;
+              const partialFlags = {} as Record<SupportedTimeframe, boolean>;
               for (const frame of SUPPORTED_TIMEFRAMES) {
                 changePctByTimeframe[frame] = 0;
+                partialFlags[frame] = false;
               }
 
               await Promise.all(
                 SUPPORTED_TIMEFRAMES.map(async (frame) => {
                   try {
-                    const value = await getChangePct(position.symbol, frame);
-                    if (Number.isFinite(value)) {
-                      changePctByTimeframe[frame] = value;
+                    const metric = await getChangePct(position.symbol, frame);
+                    if (Number.isFinite(metric.value)) {
+                      changePctByTimeframe[frame] = metric.value;
+                    }
+                    if (metric.partialData) {
+                      partialFlags[frame] = true;
                     }
                   } catch {
                     changePctByTimeframe[frame] = 0;
+                    partialFlags[frame] = true;
                   }
                 }),
               );
 
-              const pnlRaw = await getPnlByTimeframes(position, SUPPORTED_TIMEFRAMES);
+              const pnlMetrics = await getPnlByTimeframes(position, SUPPORTED_TIMEFRAMES);
               const pnlByTimeframe = {} as Record<SupportedTimeframe, number>;
               for (const frame of SUPPORTED_TIMEFRAMES) {
-                const value = pnlRaw[frame];
-                pnlByTimeframe[frame] = Number.isFinite(value) ? value : 0;
+                const metric = pnlMetrics[frame];
+                const value = metric?.value;
+                pnlByTimeframe[frame] = Number.isFinite(value) ? (value as number) : 0;
+                if (metric?.partialData) {
+                  partialFlags[frame] = true;
+                }
               }
+
+              const hasPartial = Object.values(partialFlags).some(Boolean);
 
               const normalized: OpenPositionResponse = {
                 id: String(position.id),
@@ -862,6 +874,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
                     : undefined,
                 changePctByTimeframe,
                 pnlByTimeframe,
+                partialData: hasPartial,
+                partialDataByTimeframe: partialFlags,
               };
 
               return normalized;

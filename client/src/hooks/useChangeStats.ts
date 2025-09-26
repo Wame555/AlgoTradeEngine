@@ -7,6 +7,7 @@ const DEFAULT_VALUES = {
   lastPrice: 0,
   changePct: 0,
   pnlUsdForOpenPositionsBySymbol: 0,
+  partialData: true,
 } as const;
 
 export function useChangeStats(symbol: string | undefined, timeframe: Timeframe) {
