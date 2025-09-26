@@ -28,6 +28,7 @@ import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
 import { getLastPrice } from "./paper/PriceFeed";
 import { logError } from "./utils/logger";
+import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
 import { getChangePct, getPnlByTimeframes } from "./services/metrics";
@@ -201,7 +202,12 @@ async function ensureDefaultUser() {
     throw new Error("Failed to ensure default user settings");
   }
 
-  await storage.ensureIndicatorConfigsSeed(user.id);
+  try {
+    await storage.ensureIndicatorConfigsSeed(user.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[session] indicator config seed failed: ${message}`);
+  }
 
   return { user, settings };
 }
@@ -235,6 +241,7 @@ type Deps = {
 const indicatorConfigPayloadSchema = z.object({
   name: z.string().min(1, "Indicator name is required"),
   payload: z.record(z.any()).default({}),
+  type: z.string().min(1).optional(),
 });
 
 const quickTradeSchema = insertPositionSchema
@@ -611,8 +618,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       return res.json({
         ...fallback,
-        warning:
-          "Failed to initialise session. Database schema mismatch detected. Please run migrations.",
+        warning: "Failed to initialise session. Using demo defaults.",
       });
     }
   });
@@ -1141,10 +1147,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const payload = indicatorConfigPayloadSchema.parse(req.body ?? {});
       const userId = await resolveUserId(req.query.userId);
+      const type = resolveIndicatorType(payload.name, payload.type);
       const result = await storage.createIndicatorConfig({
         userId,
         name: payload.name,
         payload: payload.payload,
+        type,
       });
       res.status(201).json(result);
     } catch (error) {

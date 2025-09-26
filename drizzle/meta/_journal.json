@@ -77,6 +77,13 @@
       "when": 1758828286211,
       "tag": "0010_bumpy_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1758911451759,
+      "tag": "0011_huge_magdalene",
+      "breakpoints": true
     }
   ]
 }

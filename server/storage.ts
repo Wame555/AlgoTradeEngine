@@ -29,6 +29,7 @@ import {
 } from "@shared/schema";
 
 import { db } from "./db";
+import { resolveIndicatorType } from "./utils/indicatorConfigs";
 
 export interface ClosedPositionSummary extends ClosedPosition {
   pnlPct: number;
@@ -40,10 +41,10 @@ export interface ClosedPositionQueryOptions {
   offset?: number;
 }
 
-const DEFAULT_INDICATOR_CONFIGS: Array<{ name: string; payload: Record<string, unknown> }> = [
-  { name: "RSI", payload: { length: 14 } },
-  { name: "EMA Cross", payload: { fast: 50, slow: 200 } },
-  { name: "FVG", payload: { lookback: 100, threshold: 0.0025 } },
+const DEFAULT_INDICATOR_CONFIGS: Array<{ name: string; type: string; payload: Record<string, unknown> }> = [
+  { name: "RSI", type: "RSI", payload: { length: 14 } },
+  { name: "EMA Cross", type: "EMA", payload: { fast: 50, slow: 200 } },
+  { name: "FVG", type: "FVG", payload: { lookback: 100, threshold: 0.0025 } },
 ];
 
 type UserSettingsInsert = typeof userSettings.$inferInsert;
@@ -246,13 +247,15 @@ export class DatabaseStorage implements IStorage {
 
   async createIndicatorConfig(config: InsertIndicatorConfig): Promise<IndicatorConfig> {
     const id = randomUUID();
+    const resolvedType = resolveIndicatorType(config.name, config.type);
     const [row] = await db
       .insert(indicatorConfigs)
-      .values({ ...config, id })
+      .values({ ...config, id, type: resolvedType })
       .onConflictDoUpdate({
         target: [indicatorConfigs.userId, indicatorConfigs.name],
         set: {
           payload: config.payload,
+          type: resolvedType,
           createdAt: new Date(),
         },
       })
@@ -279,9 +282,16 @@ export class DatabaseStorage implements IStorage {
     }
 
     for (const config of DEFAULT_INDICATOR_CONFIGS) {
+      const type = resolveIndicatorType(config.name, config.type);
       await db
         .insert(indicatorConfigs)
-        .values({ id: randomUUID(), userId, name: config.name, payload: config.payload })
+        .values({
+          id: randomUUID(),
+          userId,
+          name: config.name,
+          payload: config.payload,
+          type,
+        })
         .onConflictDoNothing({ target: [indicatorConfigs.userId, indicatorConfigs.name] });
     }
   }
