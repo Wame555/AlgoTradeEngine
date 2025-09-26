@@ -5,7 +5,7 @@ import { StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { useAccount, useTradingPairs } from "@/hooks/useTradingData";
+import { useTradingPairs, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 
 interface HeaderProps {
@@ -18,8 +18,8 @@ export function Header({ isConnected }: HeaderProps) {
   const { session } = useSession();
   const userId = session?.userId;
 
-  const { data: account } = useAccount();
   const { data: tradingPairs } = useTradingPairs();
+  const { data: statsSummary } = useStatsSummary();
 
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -34,10 +34,9 @@ export function Header({ isConnected }: HeaderProps) {
     return tradingPairs?.filter((pair) => pair.isActive).length ?? 0;
   }, [tradingPairs]);
 
-  const openPnL = useMemo(() => {
-    if (!account) return 0;
-    return account.equity - account.balance;
-  }, [account]);
+  const balance = statsSummary?.balance ?? 0;
+  const equity = statsSummary?.equity ?? balance;
+  const openPnL = statsSummary?.openPnL ?? 0;
 
   const formatCurrency = (value?: number) => {
     if (value == null || Number.isNaN(value)) return "-";
@@ -127,13 +126,13 @@ export function Header({ isConnected }: HeaderProps) {
         <div className="text-right">
           <div className="text-sm text-muted-foreground">Total Balance</div>
           <div className="font-mono text-lg font-semibold" data-testid="total-balance">
-            {formatCurrency(account?.balance)}
+            {formatCurrency(balance)}
           </div>
         </div>
         <div className="text-right">
           <div className="text-sm text-muted-foreground">Equity</div>
           <div className="font-mono text-lg font-semibold" data-testid="account-equity">
-            {formatCurrency(account?.equity)}
+            {formatCurrency(equity)}
           </div>
         </div>
         <div className="text-right">

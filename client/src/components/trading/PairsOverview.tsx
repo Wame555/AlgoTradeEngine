@@ -21,11 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import {
-  usePositions,
-  useSignals,
-  useTradingPairs,
-} from "@/hooks/useTradingData";
+import { usePositions, useSignals, useTradingPairs, usePairTimeframes } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import { useChangeStats } from "@/hooks/useChangeStats";
 import { TIMEFRAMES } from "@/constants/timeframes";
@@ -120,23 +116,29 @@ function PairRow({
   isOpenPending,
   isClosePending,
 }: PairRowProps) {
-  const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("1d");
-  const [timeframeStatus, setTimeframeStatus] = useState<Partial<Record<Timeframe, boolean>>>({});
+  const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("1m");
+  const { data: availableTimeframes } = usePairTimeframes(pair.symbol);
+  const allowedTimeframes = useMemo(() => {
+    if (!availableTimeframes || availableTimeframes.length === 0) {
+      return new Set<Timeframe>();
+    }
+    return new Set(
+      availableTimeframes.filter((tf): tf is Timeframe => (TIMEFRAMES as readonly string[]).includes(tf)),
+    );
+  }, [availableTimeframes]);
   const { data: changeStats, isLoading } = useChangeStats(pair.symbol, selectedTimeframe);
 
   useEffect(() => {
-    if (!changeStats) return;
-    const shouldDisable = changeStats.prevClose === 0 || changeStats.lastPrice === 0;
-    setTimeframeStatus((prev) => {
-      if (prev[selectedTimeframe] === shouldDisable) {
-        return prev;
+    if (allowedTimeframes.size === 0) {
+      return;
+    }
+    if (!allowedTimeframes.has(selectedTimeframe)) {
+      const fallback = (TIMEFRAMES as readonly Timeframe[]).find((tf) => allowedTimeframes.has(tf));
+      if (fallback && fallback !== selectedTimeframe) {
+        setSelectedTimeframe(fallback);
       }
-      return {
-        ...prev,
-        [selectedTimeframe]: shouldDisable,
-      };
-    });
-  }, [changeStats, selectedTimeframe]);
+    }
+  }, [allowedTimeframes, selectedTimeframe]);
 
   const handleTimeframeChange = (value: string) => {
     if ((TIMEFRAMES as readonly string[]).includes(value)) {
@@ -180,7 +182,7 @@ function PairRow({
             </SelectTrigger>
             <SelectContent>
               {TIMEFRAMES.map((tf) => {
-                const disabled = Boolean(timeframeStatus[tf]);
+                const disabled = allowedTimeframes.size > 0 && !allowedTimeframes.has(tf);
                 const item = (
                   <SelectItem
                     key={tf}

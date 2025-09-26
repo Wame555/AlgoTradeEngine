@@ -1,11 +1,29 @@
 import { bulkUpsertMarketData, type MarketDataUpsert } from "../db/marketData";
 import { BinanceFuturesClient, type BinanceKline, type FuturesTimeframe } from "./binanceClient";
 import { CONFIGURED_SYMBOLS } from "../config/symbols";
-import { FUTURES } from "../../src/config/env";
+import { FUTURES, BACKFILL_TIMEFRAMES, BACKFILL_MIN_CANDLES } from "../../src/config/env";
+import { setBackfillTarget, incrementBackfillProgress, getBackfillSnapshot } from "../state/systemHealth";
 
-const TIMEFRAMES: FuturesTimeframe[] = ["1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"];
-const MIN_CANDLES = 400;
-const MAX_LIMIT = 1000;
+const SUPPORTED_TIMEFRAMES: readonly FuturesTimeframe[] = [
+  "1m",
+  "3m",
+  "5m",
+  "15m",
+  "1h",
+  "4h",
+  "1d",
+  "1w",
+  "1M",
+] as const;
+
+const TIMEFRAMES: FuturesTimeframe[] = (() => {
+  const allowed = new Set<string>(SUPPORTED_TIMEFRAMES);
+  const envFrames = BACKFILL_TIMEFRAMES.filter((frame): frame is FuturesTimeframe => allowed.has(frame));
+  return envFrames.length > 0 ? envFrames : [...SUPPORTED_TIMEFRAMES];
+})();
+
+const MIN_CANDLES = Math.max(1, BACKFILL_MIN_CANDLES);
+const BATCH_LIMIT = 500;
 const RATE_LIMIT_WARN_THRESHOLD = 1000;
 
 const timeframeToMs: Record<FuturesTimeframe, number> = {
@@ -37,8 +55,9 @@ async function collectClosedKlines(
   client: BinanceFuturesClient,
   symbol: string,
   timeframe: FuturesTimeframe,
+  requiredCandles: number,
 ): Promise<BinanceKline[]> {
-  const required = MIN_CANDLES;
+  const required = Math.max(1, requiredCandles);
   const frameMs = timeframeToMs[timeframe];
   const now = Date.now();
   const closedCutoff = now - frameMs;
@@ -48,15 +67,14 @@ async function collectClosedKlines(
   let endTime = closedCutoff;
 
   while (klines.length < required && endTime > 0) {
-    const startTime = Math.max(0, endTime - frameMs * (MAX_LIMIT - 1));
-    const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor((endTime - startTime) / frameMs) + 1));
+    const startTime = Math.max(0, endTime - frameMs * BATCH_LIMIT);
 
     const { klines: batch, usedWeight } = await client.fetchKlines({
       symbol,
       interval: timeframe,
       startTime,
       endTime,
-      limit,
+      limit: BATCH_LIMIT,
     });
 
     if (typeof usedWeight === "number" && usedWeight > RATE_LIMIT_WARN_THRESHOLD) {
@@ -110,10 +128,23 @@ export async function runFuturesBackfill(): Promise<void> {
 
   const client = new BinanceFuturesClient();
 
+  const summary = new Map<
+    string,
+    {
+      downloaded: number;
+      upserted: number;
+    }
+  >();
+
+  for (const timeframe of TIMEFRAMES) {
+    setBackfillTarget(timeframe, CONFIGURED_SYMBOLS.length * MIN_CANDLES);
+    summary.set(timeframe, { downloaded: 0, upserted: 0 });
+  }
+
   for (const symbol of symbols) {
     for (const timeframe of TIMEFRAMES) {
       try {
-        const klines = await collectClosedKlines(client, symbol, timeframe);
+        const klines = await collectClosedKlines(client, symbol, timeframe, MIN_CANDLES);
 
         if (klines.length === 0) {
           console.warn(`[backfill] No klines returned for ${symbol} ${timeframe}.`);
@@ -122,6 +153,13 @@ export async function runFuturesBackfill(): Promise<void> {
 
         const marketRows = klines.map((kline) => mapToMarketData(symbol, timeframe, kline));
         const affected = await bulkUpsertMarketData(marketRows);
+
+        incrementBackfillProgress(timeframe, klines.length);
+        const entry = summary.get(timeframe);
+        if (entry) {
+          entry.downloaded += klines.length;
+          entry.upserted += affected;
+        }
 
         console.info(
           `[backfill] ${symbol} ${timeframe} -> downloaded=${klines.length} upserted=${affected}`,
@@ -132,6 +170,15 @@ export async function runFuturesBackfill(): Promise<void> {
         );
       }
     }
+  }
+
+  const snapshot = getBackfillSnapshot();
+  for (const timeframe of TIMEFRAMES) {
+    const entry = summary.get(timeframe) ?? { downloaded: 0, upserted: 0 };
+    const progress = snapshot[timeframe] ?? { done: entry.downloaded, target: symbols.length * MIN_CANDLES };
+    console.info(
+      `[backfill] summary ${timeframe}: downloaded=${entry.downloaded} upserted=${entry.upserted} progress=${progress.done}/${progress.target}`,
+    );
   }
 }
 
