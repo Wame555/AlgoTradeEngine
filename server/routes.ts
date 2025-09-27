@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Express, Response } from "express";
 import type { Broker } from "./broker/types";
 import type { DatabaseError } from "pg";
@@ -22,7 +23,6 @@ import {
   type User,
   type UserSettings,
 } from "@shared/schema";
-import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
 
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
@@ -40,7 +40,6 @@ import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
 import { getLastPrice as getMetricsLastPrice } from "./services/metrics";
-import { createQuickTradePosition, QuickTradeError } from "./services/quickTrade";
 import {
   SUPPORTED_TIMEFRAMES,
   type OpenPositionResponse,
@@ -125,6 +124,7 @@ const DEFAULT_USER_SETTINGS = {
   defaultTpPct: "1.00",
   defaultSlPct: "0.50",
   totalBalance: "10000.00",
+  initialBalance: "10000.00",
 } as const;
 
 async function ensureDemoUserRecord(): Promise<User> {
@@ -304,51 +304,30 @@ const indicatorConfigPayloadSchema = z.object({
   type: z.string().min(1).optional(),
 });
 
-const quickTradeRequestSchema = z
+const positionCreateRequestSchema = z
   .object({
-    mode: z.enum(["QTY", "USDT"]),
     symbol: z.string().min(1, "Symbol is required"),
     side: z.enum(["LONG", "SHORT"]),
-    qty: z.union([z.string(), z.number()]).optional(),
-    usdtAmount: z.union([z.string(), z.number()]).optional(),
-    tp_price: z.union([z.string(), z.number(), z.null()]).optional(),
-    sl_price: z.union([z.string(), z.number(), z.null()]).optional(),
+    qty: z.union([z.string(), z.number()]),
     leverage: z.union([z.string(), z.number()]).optional(),
+    tpPrice: z.union([z.string(), z.number(), z.null()]).optional(),
+    slPrice: z.union([z.string(), z.number(), z.null()]).optional(),
+    requestId: z.string().min(1, "requestId is required"),
   })
   .superRefine((data, ctx) => {
-    const qtyValue = data.qty != null ? Number(data.qty) : undefined;
-    const usdtValue = data.usdtAmount != null ? Number(data.usdtAmount) : undefined;
-
-    if (data.mode === "QTY") {
-      if (!qtyValue || !Number.isFinite(qtyValue) || qtyValue <= 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Quantity must be greater than zero",
-          path: ["qty"],
-        });
-      }
-    } else if (data.mode === "USDT") {
-      if (!usdtValue || !Number.isFinite(usdtValue) || usdtValue <= 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "USDT amount must be greater than zero",
-          path: ["usdtAmount"],
-        });
-      }
-    }
-
-    if (data.tp_price != null && Number(data.tp_price) <= 0) {
+    const qtyValue = Number(data.qty);
+    if (!Number.isFinite(qtyValue) || qtyValue <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Take profit must be greater than zero",
-        path: ["tp_price"],
+        message: "Quantity must be greater than zero",
+        path: ["qty"],
       });
     }
-    if (data.sl_price != null && Number(data.sl_price) <= 0) {
+    if (typeof data.requestId !== "string" || data.requestId.trim().length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Stop loss must be greater than zero",
-        path: ["sl_price"],
+        message: "requestId is required",
+        path: ["requestId"],
       });
     }
   });
@@ -390,13 +369,15 @@ const accountSettingsPatchSchema = z
     defaultTpPct: z.union([z.number(), z.string()]).optional(),
     defaultSlPct: z.union([z.number(), z.string()]).optional(),
     totalBalance: z.union([z.number(), z.string()]).optional(),
+    initialBalance: z.union([z.number(), z.string()]).optional(),
   })
   .superRefine((value, ctx) => {
     if (
       value.demoEnabled == null &&
       value.defaultTpPct == null &&
       value.defaultSlPct == null &&
-      value.totalBalance == null
+      value.totalBalance == null &&
+      value.initialBalance == null
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -776,7 +757,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
     settings: UserSettings,
     openPositionRows?: Position[],
   ): Promise<{ totalBalance: Decimal; openPnL: Decimal; equity: Decimal }> => {
-    const totalBalance = decimalOrZero(settings.totalBalance ?? 0).toDecimalPlaces(2);
+    const totalBalance = decimalOrZero((settings.totalBalance ?? settings.initialBalance) ?? 0).toDecimalPlaces(2);
     const positionsList = openPositionRows ?? (await storage.getAllOpenPositions());
     const { openPnL } = await computeOpenMetrics(positionsList);
     const equity = totalBalance.plus(openPnL);
@@ -999,6 +980,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       closedAt,
       userId: position.userId,
       orderId: position.orderId ?? undefined,
+      requestId: position.requestId ?? undefined,
     };
   };
 
@@ -1228,12 +1210,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const { settings } = await ensureDefaultUser();
       const snapshot = getAccountSnapshot();
-      let totalBalanceDecimal = decimalOrZero(settings.totalBalance ?? 0);
+      const initialBalanceDecimal = decimalOrZero(settings.initialBalance ?? settings.totalBalance ?? 0);
+      let totalBalanceDecimal = decimalOrZero(settings.totalBalance ?? settings.initialBalance ?? 0);
       if (snapshot && Number.isFinite(snapshot.totalBalance)) {
         totalBalanceDecimal = decimalOrZero(snapshot.totalBalance);
       }
       const totalBalance = totalBalanceDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
-      res.json({ totalBalance });
+      const initialBalance = initialBalanceDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
+      res.json({ totalBalance, initialBalance });
     } catch (error) {
       respondWithError(res, "GET /api/settings/account", error, "Failed to fetch account settings");
     }
@@ -1310,8 +1294,24 @@ export function registerRoutes(app: Express, deps: Deps): void {
         base.totalBalance = valueDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2);
       }
 
+      if (patch.initialBalance != null) {
+        const valueDecimal = decimalOrNull(patch.initialBalance);
+        if (!valueDecimal || valueDecimal.lt(0)) {
+          return res.status(400).json({ message: "Initial balance must be a non-negative number" });
+        }
+        const normalized = valueDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2);
+        base.initialBalance = normalized;
+        if (patch.totalBalance == null) {
+          base.totalBalance = normalized;
+        }
+      }
+
       if (base.totalBalance == null && existing?.totalBalance != null) {
         base.totalBalance = existing.totalBalance;
+      }
+
+      if (base.initialBalance == null && existing?.initialBalance != null) {
+        base.initialBalance = existing.initialBalance;
       }
 
       base.userId = user.id;
@@ -1321,8 +1321,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const normalizedBalance = responseBalanceDecimal
         .toDecimalPlaces(2, Decimal.ROUND_DOWN)
         .toNumber();
+      const responseInitialDecimal = decimalOrZero(result.initialBalance ?? base.initialBalance ?? 0);
+      const normalizedInitial = responseInitialDecimal
+        .toDecimalPlaces(2, Decimal.ROUND_DOWN)
+        .toNumber();
       updateAccountSnapshot({ totalBalance: normalizedBalance });
-      res.json({ totalBalance: normalizedBalance });
+      res.json({ totalBalance: normalizedBalance, initialBalance: normalizedInitial });
     } catch (error) {
       respondWithError(res, "PATCH /api/settings/account", error, "Failed to update account settings");
     }
@@ -1360,71 +1364,29 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
-  app.post("/api/trade/quick", async (req, res) => {
-    const parsed = quickTradeRequestSchema.safeParse(req.body ?? {});
-    if (!parsed.success) {
-      const firstError = parsed.error.errors[0]?.message ?? "Invalid request";
-      return res.status(400).json({ code: "BAD_REQUEST", message: firstError });
-    }
-
-    try {
-      const payload = parsed.data;
-      const symbol = payload.symbol.toUpperCase();
-
-      const { user, settings } = await ensureDefaultUser();
-      const metricsPrice = await getMetricsLastPrice(symbol);
-      let entryPrice = Number(metricsPrice?.value ?? 0);
-      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
-        const fallbackPrice = getPaperLastPrice(symbol);
-        if (Number.isFinite(fallbackPrice) && typeof fallbackPrice === "number" && fallbackPrice > 0) {
-          entryPrice = fallbackPrice;
-        }
-      }
-
-      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
-        return res.status(400).json({
-          code: "NO_MARKET_PRICE",
-          message: "No market price available for the selected symbol",
-        });
-      }
-
-      const defaultLeverage = Number(settings?.defaultLeverage ?? 1);
-      const leverageValue = Number.isFinite(defaultLeverage) && defaultLeverage > 0 ? defaultLeverage : 1;
-
-      const result = await createQuickTradePosition({
-        userId: user.id,
-        payload,
-        defaultLeverage: leverageValue,
-        entryPrice,
-      });
-
-      clearCacheKey("positions:open");
-      clearCacheKey(`positions:open:${user.id}`);
-
-      return res.status(201).json({ orderId: result.orderId, accepted: true });
-    } catch (error) {
-      if (error instanceof QuickTradeError) {
-        if (error.code === "DB_ERROR") {
-          return res.status(500).json({ code: error.code, message: error.message });
-        }
-        return res.status(400).json({ code: error.code, message: error.message });
-      }
-      return respondWithError(res, "POST /api/trade/quick", error, "Failed to create quick trade position");
-    }
-  });
-
   app.post("/api/positions", async (req, res) => {
-    const parsed = quickTradeRequestSchema.safeParse(req.body ?? {});
+    const parsed = positionCreateRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       const firstError = parsed.error.errors[0]?.message ?? "Invalid request";
       return res.status(400).json({ code: "BAD_REQUEST", message: firstError });
     }
 
+    const payload = parsed.data;
+    const requestId = payload.requestId.trim();
+    console.info(`[positions] received requestId=${requestId}`);
+
     try {
-      const payload = parsed.data;
       const symbol = payload.symbol.toUpperCase();
       const side = payload.side;
-      const mode = payload.mode;
+
+      const existingPosition = await storage.getPositionByRequestId(requestId);
+      if (existingPosition) {
+        console.info(`[positions] requestId=${requestId} dedup=hit existingId=${existingPosition.id}`);
+        return res.status(200).json({
+          position: buildOpenPositionResponse(existingPosition),
+          deduplicated: true,
+        });
+      }
 
       const { user, settings } = await ensureDefaultUser();
 
@@ -1441,67 +1403,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
 
       const priceDecimal = new Decimal(lastPrice as number);
-      let qtyDecimal: Decimal | null = null;
-      let amountUsdDecimal: Decimal | null = null;
-      let requiredUsdDecimal: Decimal | null = null;
-
-      if (mode === "QTY") {
-        qtyDecimal = decimalOrNull(payload.qty);
-        if (!qtyDecimal || qtyDecimal.lte(0)) {
-          return res.status(400).json({ code: "BAD_REQUEST", message: "Quantity must be greater than zero" });
-        }
-        amountUsdDecimal = qtyDecimal.times(priceDecimal);
-        requiredUsdDecimal = amountUsdDecimal;
-      } else {
-        amountUsdDecimal = decimalOrNull(payload.usdtAmount);
-        if (!amountUsdDecimal || amountUsdDecimal.lte(0)) {
-          return res.status(400).json({ code: "BAD_REQUEST", message: "USDT amount must be greater than zero" });
-        }
-
-        const tradingPair = await storage.getTradingPair(symbol);
-        const filters = await binanceService.getSymbolFilters(symbol);
-        const stepSize = filters?.stepSize ?? (tradingPair?.stepSize ? Number(tradingPair.stepSize) : undefined);
-        const minQty = filters?.minQty ?? (tradingPair?.minQty ? Number(tradingPair.minQty) : undefined);
-        const minNotional =
-          filters?.minNotional ?? (tradingPair?.minNotional ? Number(tradingPair.minNotional) : undefined);
-
-        try {
-          const quantityResult = calculateQuantityFromUsd(
-            amountUsdDecimal.toNumber(),
-            priceDecimal.toNumber(),
-            {
-              stepSize,
-              minQty,
-              minNotional,
-            },
-          );
-          qtyDecimal = new Decimal(quantityResult.quantity);
-          amountUsdDecimal = qtyDecimal.times(priceDecimal);
-        } catch (error) {
-          if (error instanceof QuantityValidationError) {
-            return res.status(400).json({ code: "BAD_REQUEST", message: error.message });
-          }
-          return res.status(400).json({ code: "BAD_REQUEST", message: "Failed to calculate order quantity" });
-        }
-
-        requiredUsdDecimal = amountUsdDecimal;
-      }
-
+      const qtyDecimal = decimalOrNull(payload.qty);
       if (!qtyDecimal || qtyDecimal.lte(0)) {
-        return res
-          .status(400)
-          .json({ code: "BAD_REQUEST", message: "Position size could not be determined" });
-      }
-
-      if (!requiredUsdDecimal || !requiredUsdDecimal.isFinite()) {
-        requiredUsdDecimal = qtyDecimal.times(priceDecimal);
-      }
-
-      const openPositions = await storage.getAllOpenPositions();
-      const { equity } = await computeEquitySnapshot(settings, openPositions);
-
-      if (requiredUsdDecimal.gt(equity)) {
-        return res.status(400).json({ code: "INSUFFICIENT_EQUITY", message: "Insufficient equity" });
+        return res.status(400).json({ code: "BAD_REQUEST", message: "Quantity must be greater than zero" });
       }
 
       const qtyStr = formatDecimal(qtyDecimal, 8);
@@ -1510,35 +1414,25 @@ export function registerRoutes(app: Express, deps: Deps): void {
         return res.status(400).json({ code: "BAD_REQUEST", message: "Order quantity is invalid" });
       }
 
-      const brokerSide = side === "LONG" ? "BUY" : "SELL";
-      const order = await broker.placeOrder({
-        symbol,
-        side: brokerSide,
-        type: "MARKET",
-        qty: orderQty,
-      });
+      const amountUsdDecimal = qtyDecimal.times(priceDecimal);
+      const { equity } = await computeEquitySnapshot(settings);
 
-      if (!order) {
-        void telegramService.sendNotification("❌ Failed to open position: Order execution failed");
-        return res.status(400).json({ code: "BAD_REQUEST", message: "Failed to execute trade" });
+      if (amountUsdDecimal.gt(equity)) {
+        return res.status(400).json({ code: "INSUFFICIENT_EQUITY", message: "Insufficient equity" });
       }
 
-      const entryFill = decimalOrNull(order.fills?.[0]?.price) ?? priceDecimal;
-      const executedAmountUsd = qtyDecimal.times(entryFill);
-      const amountUsdStr = formatDecimal(executedAmountUsd, 2);
-      const entryPriceStr = formatDecimal(entryFill, 8);
+      const leverageDecimal =
+        decimalOrNull(payload.leverage ?? settings.defaultLeverage ?? 1) ?? new Decimal(1);
+      const leverageStr = formatDecimal(leverageDecimal, 2);
 
-      const leverageDecimal = decimalOrNull(payload.leverage ?? settings.defaultLeverage ?? 1);
-      const leverageStr = leverageDecimal ? formatDecimal(leverageDecimal, 2) : undefined;
+      const defaults = computeDefaultTargets(side, priceDecimal.toNumber(), settings);
 
-      const defaults = computeDefaultTargets(side, entryFill.toNumber(), settings);
-
-      const providedTp = payload.tp_price === null ? null : decimalOrNull(payload.tp_price);
-      const providedSl = payload.sl_price === null ? null : decimalOrNull(payload.sl_price);
+      const providedTp = payload.tpPrice === null ? null : decimalOrNull(payload.tpPrice);
+      const providedSl = payload.slPrice === null ? null : decimalOrNull(payload.slPrice);
 
       if (
         providedTp &&
-        ((side === "LONG" && providedTp.lte(entryFill)) || (side === "SHORT" && providedTp.gte(entryFill)))
+        ((side === "LONG" && providedTp.lte(priceDecimal)) || (side === "SHORT" && providedTp.gte(priceDecimal)))
       ) {
         return res.status(400).json({
           code: "BAD_REQUEST",
@@ -1548,7 +1442,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       if (
         providedSl &&
-        ((side === "LONG" && providedSl.gte(entryFill)) || (side === "SHORT" && providedSl.lte(entryFill)))
+        ((side === "LONG" && providedSl.gte(priceDecimal)) || (side === "SHORT" && providedSl.lte(priceDecimal)))
       ) {
         return res.status(400).json({
           code: "BAD_REQUEST",
@@ -1557,64 +1451,114 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
 
       const takeProfitPrice =
-        providedTp === null
+        payload.tpPrice === null
           ? undefined
           : providedTp
           ? formatDecimal(providedTp, 8)
           : defaults.takeProfit ?? undefined;
       const stopLossPrice =
-        providedSl === null
+        payload.slPrice === null
           ? undefined
           : providedSl
           ? formatDecimal(providedSl, 8)
           : defaults.stopLoss ?? undefined;
 
-      const positionToSave = insertPositionSchema.parse({
+      const amountUsdStr = formatDecimal(amountUsdDecimal, 2);
+      const entryPriceStr = formatDecimal(priceDecimal, 8);
+      const sizeStr = formatDecimal(amountUsdDecimal, 8);
+      const orderId = randomUUID();
+
+      const insertPayload = insertPositionSchema.parse({
         userId: user.id,
         symbol,
         side,
+        qty: qtyStr,
+        size: sizeStr,
         entryPrice: entryPriceStr,
         currentPrice: entryPriceStr,
-        size: amountUsdStr,
-        qty: qtyStr,
-        amountUsd: amountUsdStr,
         leverage: leverageStr,
+        amountUsd: amountUsdStr,
         takeProfit: takeProfitPrice,
         stopLoss: stopLossPrice,
         tpPrice: takeProfitPrice,
         slPrice: stopLossPrice,
         status: "OPEN",
+        orderId,
+        requestId,
       });
 
-      const result = await storage.createPosition({
-        ...positionToSave,
-        orderId: order.orderId,
+      let transactionResult: { positionId: string; deduped: boolean };
+      try {
+        transactionResult = await db.transaction(async (tx) => {
+          const [existing] = await tx
+            .select({ id: positions.id })
+            .from(positions)
+            .where(eq(positions.requestId, requestId))
+            .limit(1);
+          if (existing) {
+            return { positionId: existing.id, deduped: true };
+          }
+
+          const [inserted] = await tx
+            .insert(positions)
+            .values(insertPayload)
+            .returning({ id: positions.id });
+
+          if (!inserted) {
+            throw new Error("Failed to insert position");
+          }
+
+          return { positionId: inserted.id, deduped: false };
+        });
+      } catch (error) {
+        const pgError = error as DatabaseError | undefined;
+        if (pgError && pgError.code === "23505") {
+          const existing = await storage.getPositionByRequestId(requestId);
+          if (existing) {
+            console.info(`[positions] requestId=${requestId} dedup=hit existingId=${existing.id}`);
+            return res.status(200).json({
+              position: buildOpenPositionResponse(existing),
+              deduplicated: true,
+            });
+          }
+        }
+        throw error;
+      }
+
+      const { positionId, deduped } = transactionResult;
+      const position = await storage.getPositionById(positionId);
+      if (!position) {
+        throw new Error("Position not found after insert");
+      }
+
+      console.info(`[positions] requestId=${requestId} dedup=${deduped ? "hit" : "miss"}`);
+      if (deduped) {
+        console.info(`[positions] requestId=${requestId} existing position id=${position.id}`);
+      } else {
+        console.info(`[positions] requestId=${requestId} opened position id=${position.id}`);
+      }
+
+      if (!deduped) {
+        clearCacheKey("positions:open");
+        clearCacheKey(`positions:open:${user.id}`);
+
+        await telegramService.sendTradeNotification({
+          action: "opened",
+          symbol: position.symbol,
+          side: position.side,
+          size: position.qty ?? position.size,
+          price: position.entryPrice,
+          stopLoss: position.stopLoss ?? position.slPrice ?? undefined,
+          takeProfit: position.takeProfit ?? position.tpPrice ?? undefined,
+        });
+
+        broadcast({ type: "position_opened", data: position });
+      }
+
+      res.status(deduped ? 200 : 201).json({
+        position: buildOpenPositionResponse(position),
+        deduplicated: deduped,
       });
-
-      clearCacheKey("positions:open");
-      clearCacheKey(`positions:open:${user.id}`);
-
-      console.info(
-        `[trade] opened ${result.symbol} ${result.side} qty=${result.qty ?? result.size} entry=${result.entryPrice}`,
-      );
-
-      await telegramService.sendTradeNotification({
-        action: "opened",
-        symbol: result.symbol,
-        side: result.side,
-        size: result.qty ?? result.size,
-        price: result.entryPrice,
-        stopLoss: result.stopLoss ?? result.slPrice ?? undefined,
-        takeProfit: result.takeProfit ?? result.tpPrice ?? undefined,
-      });
-
-      broadcast({ type: "position_opened", data: result });
-      const responseOrderId = typeof order.orderId === "string" && order.orderId
-        ? order.orderId
-        : typeof result.orderId === "string"
-          ? result.orderId
-          : undefined;
-      res.status(201).json({ orderId: responseOrderId ?? null, accepted: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void telegramService.sendNotification(`❌ Failed to open position: ${message}`);
@@ -1810,6 +1754,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       equity: 0,
       openPnL: 0,
       totalBalance: 0,
+      initialBalance: 0,
     };
 
     try {
@@ -1819,7 +1764,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
         db.select().from(paperAccounts).limit(1),
         storage.getAllOpenPositions(),
       ]);
-      const totalBalanceSetting = Number(settings.totalBalance ?? 0);
+      const totalBalanceSetting = Number(settings.totalBalance ?? settings.initialBalance ?? 0);
+      const initialBalanceSetting = Number(settings.initialBalance ?? settings.totalBalance ?? 0);
 
       const computeClosedPnl = (row: (typeof closedRows)[number]) => {
         const entryPx = Number(row.entryPrice ?? 0);
@@ -1876,6 +1822,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
         totalBalanceDecimal = decimalOrZero(fallbackBalance as number).toDecimalPlaces(2);
       }
 
+      const initialBalanceDecimal = decimalOrZero(initialBalanceSetting)
+        .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+
       const { openPnL: openPnLDecimal } = await computeOpenMetrics(openPositionRows);
       const sanitizedOpenPnL = openPnLDecimal.isFinite() ? openPnLDecimal : new Decimal(0);
       const equityDecimal = totalBalanceDecimal.plus(sanitizedOpenPnL);
@@ -1895,6 +1844,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
         equity,
         openPnL,
         totalBalance: balance,
+        initialBalance: initialBalanceDecimal.toNumber(),
       };
 
       updateAccountSnapshot({ totalBalance: balance, equity, openPnL });

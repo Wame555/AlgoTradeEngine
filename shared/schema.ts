@@ -67,6 +67,7 @@ export const userSettings = pgTable(
     defaultTpPct: numeric("default_tp_pct", { precision: 5, scale: 2 }).default("1.00"),
     defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
     totalBalance: numeric("total_balance", { precision: 18, scale: 2 }).notNull().default("10000.00"),
+    initialBalance: numeric("initial_balance", { precision: 18, scale: 2 }).default("10000.00"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
   },
@@ -116,12 +117,16 @@ export const positions = pgTable(
     trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
     status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
     orderId: varchar("order_id", { length: 50 }),
+    requestId: text("request_id"),
     openedAt: timestamp("opened_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
     closedAt: timestamp("closed_at"),
   },
   (table) => ({
     userIdx: index("idx_positions_user").on(table.userId),
+    requestIdUnique: uniqueIndex("idx_positions_request_id")
+      .on(table.requestId)
+      .where(sql`${table.requestId} IS NOT NULL`),
   }),
 );
 

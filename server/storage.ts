@@ -78,6 +78,7 @@ export interface IStorage {
   getOpenPositions(userId: string): Promise<Position[]>;
   getAllOpenPositions(): Promise<Position[]>;
   getPositionById(id: string): Promise<Position | undefined>;
+  getPositionByRequestId(requestId: string): Promise<Position | undefined>;
   createPosition(position: InsertPosition): Promise<Position>;
   updatePosition(id: string, updates: Partial<Position>): Promise<Position>;
   closePosition(
@@ -129,6 +130,7 @@ function mapPositionRow(row: Record<string, any>): Position {
     trailingStopPercent: row.trailing_stop_percent ?? undefined,
     status: row.status,
     orderId: row.order_id ?? undefined,
+    requestId: row.request_id ?? undefined,
     openedAt: row.opened_at,
     updatedAt: row.updated_at ?? undefined,
     closedAt: row.closed_at ?? undefined,
@@ -206,6 +208,7 @@ export class DatabaseStorage implements IStorage {
       defaultTpPct: "default_tp_pct",
       defaultSlPct: "default_sl_pct",
       totalBalance: "total_balance",
+      initialBalance: "initial_balance",
     };
 
     const insertPayload = {
@@ -333,6 +336,14 @@ export class DatabaseStorage implements IStorage {
 
   async getPositionById(id: string): Promise<Position | undefined> {
     const row = await positionsRepo.selectPositionById(id);
+    return row ? mapPositionRow(row) : undefined;
+  }
+
+  async getPositionByRequestId(requestId: string): Promise<Position | undefined> {
+    if (!requestId) {
+      return undefined;
+    }
+    const row = await positionsRepo.selectPositionByRequestId(requestId);
     return row ? mapPositionRow(row) : undefined;
   }
 

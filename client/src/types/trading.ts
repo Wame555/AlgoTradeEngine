@@ -96,6 +96,7 @@ export interface UserSettings {
   defaultTpPct: string;
   defaultSlPct: string;
   totalBalance: string;
+  initialBalance?: string;
   createdAt: string;
   updatedAt: string;
 }

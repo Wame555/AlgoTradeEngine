@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Filter, Plus, X } from "lucide-react";
+import { RefreshCw, Filter, X } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,10 +45,7 @@ interface PairRowProps {
   position?: Position;
   signal?: Signal;
   dailyChangePct?: number | null;
-  onOpenPosition: (symbol: string, side: "LONG" | "SHORT") => void;
   onClosePosition: (positionId: string) => void;
-  canOpenPosition: boolean;
-  isOpenPending: boolean;
   isClosePending: boolean;
 }
 
@@ -110,10 +107,7 @@ function PairRow({
   position,
   signal,
   dailyChangePct,
-  onOpenPosition,
   onClosePosition,
-  canOpenPosition,
-  isOpenPending,
   isClosePending,
 }: PairRowProps) {
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("1m");
@@ -272,16 +266,9 @@ function PairRow({
             <X className="h-4 w-4" />
           </Button>
         ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onOpenPosition(pair.symbol, signal?.signal === "SHORT" ? "SHORT" : "LONG")}
-            disabled={isOpenPending || !canOpenPosition}
-            className="text-primary hover:text-primary/80"
-            data-testid={`button-open-${pair.symbol}`}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          <span className="text-xs text-muted-foreground" data-testid={`button-open-${pair.symbol}`}>
+            Use order panel
+          </span>
         )}
       </td>
     </tr>
@@ -325,39 +312,6 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
       toast({
         title: "Error",
         description: error.message || "Failed to close position",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const createPositionMutation = useMutation({
-    mutationFn: async (data: { symbol: string; side: "LONG" | "SHORT" }) => {
-      if (!userId) {
-        throw new Error("Missing user context");
-      }
-      await apiRequest("POST", "/api/positions", {
-        userId,
-        symbol: data.symbol,
-        side: data.side,
-        size: "0.01",
-        entryPrice: "0",
-      });
-    },
-    onSuccess: () => {
-      toast({
-        title: "Success",
-        description: "Position opened successfully",
-        variant: "default",
-      });
-      if (userId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/positions/open"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/stats/summary"] });
-      }
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to open position",
         variant: "destructive",
       });
     },
@@ -446,10 +400,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                       position={position}
                       signal={signal}
                       dailyChangePct={dailyChangeMap?.get(symbol)?.changePct ?? null}
-                      onOpenPosition={(sym, side) => createPositionMutation.mutate({ symbol: sym, side })}
                       onClosePosition={(positionId) => closePositionMutation.mutate(positionId)}
-                      canOpenPosition={Boolean(userId)}
-                      isOpenPending={createPositionMutation.isPending}
                       isClosePending={closePositionMutation.isPending}
                     />
                   );

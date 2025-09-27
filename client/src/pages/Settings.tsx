@@ -55,7 +55,10 @@ export default function Settings() {
   const [patchValues, setPatchValues] = useState({ initialBalance: "", feesMultiplier: "" });
   const [totalBalanceInput, setTotalBalanceInput] = useState("");
 
-  const { data: accountBalanceData, isLoading: isLoadingAccountBalance } = useQuery<{ totalBalance: number }>({
+  const { data: accountBalanceData, isLoading: isLoadingAccountBalance } = useQuery<{
+    totalBalance: number;
+    initialBalance: number;
+  }>({
     queryKey: ['/api/settings/account'],
     queryFn: async () => {
       const response = await fetch('/api/settings/account', {
@@ -65,17 +68,17 @@ export default function Settings() {
         const message = await response.text();
         throw new Error(message || 'Failed to load account balance');
       }
-      return (await response.json()) as { totalBalance: number };
+      return (await response.json()) as { totalBalance: number; initialBalance: number };
     },
     staleTime: 60 * 1000,
     enabled: Boolean(userId),
   });
 
   useEffect(() => {
-    if (accountBalanceData?.totalBalance != null && Number.isFinite(accountBalanceData.totalBalance)) {
-      setTotalBalanceInput(accountBalanceData.totalBalance.toFixed(2));
+    if (accountBalanceData?.initialBalance != null && Number.isFinite(accountBalanceData.initialBalance)) {
+      setTotalBalanceInput(accountBalanceData.initialBalance.toFixed(2));
     }
-  }, [accountBalanceData?.totalBalance]);
+  }, [accountBalanceData?.initialBalance]);
 
   const resetStatsMutation = useMutation({
     mutationFn: async () => {
@@ -122,12 +125,12 @@ export default function Settings() {
   });
 
   const accountBalanceMutation = useMutation({
-    mutationFn: async (payload: { totalBalance: number }) => {
+    mutationFn: async (payload: { initialBalance: number }) => {
       const res = await apiRequest('PATCH', '/api/settings/account', payload);
-      return (await res.json()) as { totalBalance: number };
+      return (await res.json()) as { totalBalance: number; initialBalance: number };
     },
     onSuccess: (data) => {
-      const nextValue = Number(data?.totalBalance ?? 0);
+      const nextValue = Number(data?.initialBalance ?? data?.totalBalance ?? 0);
       setTotalBalanceInput(nextValue.toFixed(2));
       toast({
         title: 'Account balance updated',
@@ -158,11 +161,11 @@ export default function Settings() {
       binanceApiKey: "",
       binanceApiSecret: "",
       isTestnet: true,
-    defaultLeverage: 1,
-    riskPercent: 2,
-    demoEnabled: true,
-    defaultTpPct: "1.00",
-    defaultSlPct: "0.50",
+      defaultLeverage: 1,
+      riskPercent: 2,
+      demoEnabled: true,
+      defaultTpPct: "1.00",
+      defaultSlPct: "0.50",
       telegramBotToken: "",
       telegramChatId: "",
     },
@@ -297,17 +300,17 @@ export default function Settings() {
     if (!Number.isFinite(numeric) || numeric < 0) {
       toast({
         title: 'Invalid value',
-        description: 'Total balance must be a non-negative number',
+        description: 'Initial balance must be a non-negative number',
         variant: 'destructive',
       });
       return;
     }
-    accountBalanceMutation.mutate({ totalBalance: numeric });
+    accountBalanceMutation.mutate({ initialBalance: numeric });
   };
 
   const currentTotalBalance =
-    accountBalanceMutation.data?.totalBalance ??
-    accountBalanceData?.totalBalance ??
+    accountBalanceMutation.data?.initialBalance ??
+    accountBalanceData?.initialBalance ??
     Number(totalBalanceInput || 0);
   const formattedTotalBalance = `$${formatUsd(Number.isFinite(currentTotalBalance) ? currentTotalBalance : 0)}`;
 

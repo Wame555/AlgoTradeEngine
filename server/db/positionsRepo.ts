@@ -30,6 +30,7 @@ const SELECT_COLUMNS = `
   "trailing_stop_percent",
   "status",
   "order_id",
+  "request_id",
   "opened_at",
   "updated_at",
   "closed_at"
@@ -61,6 +62,7 @@ const SELECT_COLUMNS_ALIAS = `
   p."trailing_stop_percent",
   p."status",
   p."order_id",
+  p."request_id",
   p."opened_at",
   p."updated_at",
   p."closed_at"
@@ -85,6 +87,7 @@ const COLUMN_MAP: Record<string, string> = {
   trailingStopPercent: "trailing_stop_percent",
   status: "status",
   orderId: "order_id",
+  requestId: "request_id",
   openedAt: "opened_at",
   updatedAt: "updated_at",
   closedAt: "closed_at",
@@ -182,6 +185,17 @@ export async function selectPositionById(id: string): Promise<PositionRow | unde
     LIMIT 1;
   `;
   const rows = await query(sql, [id]);
+  return rows[0];
+}
+
+export async function selectPositionByRequestId(requestId: string): Promise<PositionRow | undefined> {
+  const sql = `
+    SELECT ${SELECT_COLUMNS}
+    FROM ${TABLE}
+    WHERE "request_id" = $1
+    LIMIT 1;
+  `;
+  const rows = await query(sql, [requestId]);
   return rows[0];
 }
 
