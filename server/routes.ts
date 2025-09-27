@@ -23,6 +23,7 @@ import {
   type User,
   type UserSettings,
 } from "@shared/schema";
+import { QuantityValidationError } from "@shared/tradingUtils";
 
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
