@@ -34,7 +34,8 @@ export function Header({ isConnected }: HeaderProps) {
     return tradingPairs?.filter((pair) => pair.isActive).length ?? 0;
   }, [tradingPairs]);
 
-  const totalBalance = statsSummary?.totalBalance ?? statsSummary?.balance ?? 0;
+  const totalBalance =
+    statsSummary?.initialBalance ?? statsSummary?.totalBalance ?? statsSummary?.balance ?? 0;
   const equity = statsSummary?.equity ?? (totalBalance + (statsSummary?.openPnL ?? 0));
   const openPnL = statsSummary?.openPnL ?? 0;
 

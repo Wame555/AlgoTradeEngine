@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
 import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
@@ -73,6 +72,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const { data: settings } = useUserSettings();
   const { data: statsSummary } = useStatsSummary();
   const [hasEquityError, setHasEquityError] = useState(false);
+  const [pendingSide, setPendingSide] = useState<"LONG" | "SHORT" | null>(null);
+  const lastSubmitRef = useRef<number>(0);
 
   const form = useForm<TradeForm>({
     resolver: zodResolver(tradeFormSchema),
@@ -114,31 +115,40 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   const mutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
-      const response = await apiRequest('POST', '/api/trade/quick', payload);
-      return response.json();
+      const response = await fetch('/api/positions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const error = new Error(
+          (data as { message?: string } | null)?.message || response.statusText || 'Failed to open position',
+        );
+        (error as any).code = (data as { code?: string } | null)?.code;
+        throw error;
+      }
+      return data;
     },
     onSuccess: async () => {
+      setPendingSide(null);
       setHasEquityError(false);
       toast({
         title: "Success",
         description: "Position opened successfully",
       });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["positions:open"] }),
-        queryClient.invalidateQueries({ queryKey: ["summary"] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
       ]);
     },
     onError: (error: any) => {
+      setPendingSide(null);
       const message = typeof error?.message === 'string' ? error.message : 'Failed to open position';
-      const parsed = (() => {
-        try {
-          return JSON.parse(message.split(': ').slice(1).join(': '));
-        } catch {
-          return null;
-        }
-      })();
+      const code = (error as { code?: string } | undefined)?.code;
 
-      if (parsed?.code === 'INSUFFICIENT_EQUITY') {
+      if (code === 'INSUFFICIENT_EQUITY' || message.toLowerCase().includes('insufficient equity')) {
         setHasEquityError(true);
         toast({
           title: 'Nincs elegendő egyenleg',
@@ -150,73 +160,141 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
       toast({
         title: 'Error',
-        description: parsed?.message || message || 'Failed to open position',
+        description: message || 'Failed to open position',
         variant: 'destructive',
       });
     },
   });
 
   const onSubmit = (data: TradeForm) => {
+    const resetPending = () => {
+      setPendingSide(null);
+      lastSubmitRef.current = 0;
+    };
+
     if (!userId) {
       toast({ title: "Missing user", description: "User session is not ready yet.", variant: "destructive" });
+      resetPending();
       return;
     }
 
     const symbol = data.symbol.trim().toUpperCase();
     if (!symbol) {
       toast({ title: "Select symbol", description: "Choose a trading pair before placing an order.", variant: "destructive" });
+      resetPending();
       return;
     }
 
     const price = getLastPrice(symbol);
     if (!price) {
       toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
+      resetPending();
       return;
     }
 
-    const payload: Record<string, unknown> = { symbol, side: data.side, mode: data.mode };
-    if (data.mode === 'QTY') {
-      payload.qty = Number(data.size);
-    } else {
-      payload.usdtAmount = Number(data.amountUsd);
-      const equity = Number(statsSummary?.equity ?? 0);
-      if (Number.isFinite(equity) && Number(payload.usdtAmount) > equity) {
-        setHasEquityError(true);
-        toast({
-          title: 'Nincs elegendő egyenleg',
-          description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
-          variant: 'destructive',
-        });
+    const side = data.side;
+    const mode = data.mode;
+    let qtyValue: number | null = null;
+    let requiredUsd = 0;
+
+    if (mode === 'QTY') {
+      const size = Number(data.size);
+      if (!Number.isFinite(size) || size <= 0) {
+        toast({ title: 'Invalid size', description: 'Enter a valid position size.', variant: 'destructive' });
+        resetPending();
         return;
+      }
+      qtyValue = size;
+      requiredUsd = size * price;
+    } else {
+      const amountUsd = Number(data.amountUsd);
+      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+        toast({ title: 'Invalid amount', description: 'Enter a valid USDT amount.', variant: 'destructive' });
+        resetPending();
+        return;
+      }
+      qtyValue = amountUsd / price;
+      requiredUsd = amountUsd;
+    }
+
+    if (!qtyValue || qtyValue <= 0) {
+      toast({ title: 'Invalid quantity', description: 'Unable to determine order quantity.', variant: 'destructive' });
+      resetPending();
+      return;
+    }
+
+    const equity = Number(statsSummary?.equity ?? 0);
+    if (Number.isFinite(equity) && requiredUsd > equity) {
+      setHasEquityError(true);
+      toast({
+        title: 'Nincs elegendő egyenleg',
+        description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+        variant: 'destructive',
+      });
+      resetPending();
+      return;
+    }
+
+    const qtyFormatted = qtyValue.toFixed(8);
+    const payload: Record<string, unknown> = {
+      symbol,
+      side,
+      qty: qtyFormatted,
+      requestId: crypto.randomUUID(),
+    };
+
+    const leverageValue = Number(data.leverage);
+    if (Number.isFinite(leverageValue) && leverageValue > 0) {
+      payload.leverage = leverageValue;
+    }
+
+    const tpPercent = Number(data.takeProfit);
+    if (Number.isFinite(tpPercent) && tpPercent > 0) {
+      const tpMultiplier = tpPercent / 100;
+      const tpPrice = side === 'LONG' ? price * (1 + tpMultiplier) : price * (1 - tpMultiplier);
+      if (Number.isFinite(tpPrice) && tpPrice > 0) {
+        payload.tpPrice = Number(tpPrice.toFixed(8));
       }
     }
 
-    const tp = Number(data.takeProfit);
-    if (Number.isFinite(tp) && tp > 0) {
-      payload.tp_price = tp;
+    const slPercent = Number(data.stopLoss);
+    if (Number.isFinite(slPercent) && slPercent > 0) {
+      const slMultiplier = slPercent / 100;
+      let slPrice = side === 'LONG' ? price * (1 - slMultiplier) : price * (1 + slMultiplier);
+      slPrice = Math.max(slPrice, 0.00000001);
+      if (Number.isFinite(slPrice) && slPrice > 0) {
+        payload.slPrice = Number(slPrice.toFixed(8));
+      }
     }
 
-    const sl = Number(data.stopLoss);
-    if (Number.isFinite(sl) && sl > 0) {
-      payload.sl_price = sl;
-    }
-
-    if (Number.isFinite(data.leverage) && data.leverage > 0) {
-      payload.leverage = data.leverage;
-    }
-
+    setHasEquityError(false);
     mutation.mutate(payload);
   };
 
-  const handlePlaceOrder = () => {
+  const submitOrder = (sideOverride?: 'LONG' | 'SHORT') => {
     if (mutation.isPending) {
       return;
+    }
+    const now = Date.now();
+    if (now - lastSubmitRef.current < 1000) {
+      return;
+    }
+    lastSubmitRef.current = now;
+    if (sideOverride) {
+      form.setValue('side', sideOverride);
+      setPendingSide(sideOverride);
+    } else {
+      setPendingSide(form.getValues('side'));
     }
     void form.handleSubmit(onSubmit)();
   };
 
+  const handlePlaceOrder = () => {
+    submitOrder();
+  };
+
   const handleSideClick = (side: 'LONG' | 'SHORT') => {
-    form.setValue('side', side);
+    submitOrder(side);
   };
 
   const availablePairs = tradingPairs ?? [];
@@ -226,6 +304,12 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const mode = form.watch('mode');
   const watchedQty = form.watch('size');
   const watchedAmount = form.watch('amountUsd');
+
+  useEffect(() => {
+    if (!mutation.isPending) {
+      setPendingSide(null);
+    }
+  }, [mutation.isPending]);
 
   useEffect(() => {
     if (mode === 'USDT') {
@@ -442,7 +526,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 disabled={isFormDisabled}
               >
                 <TrendingUp className="mr-2 h-4 w-4" />
-                Long
+                {pendingSide === 'LONG' && isPending ? 'Submitting…' : 'Long'}
               </Button>
 
               <Button
@@ -457,7 +541,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 disabled={isFormDisabled}
               >
                 <TrendingDown className="mr-2 h-4 w-4" />
-                Short
+                {pendingSide === 'SHORT' && isPending ? 'Submitting…' : 'Short'}
               </Button>
             </div>
 

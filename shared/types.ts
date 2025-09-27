@@ -65,6 +65,7 @@ export interface OpenPositionResponse {
   closedAt?: string;
   userId?: string;
   orderId?: string;
+  requestId?: string | null;
 }
 
 export interface StatsSummaryResponse {
@@ -78,4 +79,5 @@ export interface StatsSummaryResponse {
   equity: number;
   openPnL: number;
   totalBalance?: number;
+  initialBalance?: number;
 }

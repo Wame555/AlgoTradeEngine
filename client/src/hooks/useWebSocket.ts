@@ -15,7 +15,6 @@ export function useWebSocket() {
         wsRef.current = new WebSocket(wsUrl);
 
         wsRef.current.onopen = () => {
-          console.log('WebSocket connected');
           setIsConnected(true);
         };
 
@@ -25,7 +24,6 @@ export function useWebSocket() {
             
             switch (message.type) {
               case 'connection':
-                console.log('WebSocket connection confirmed');
                 break;
               
               case 'price_update':
@@ -45,19 +43,15 @@ export function useWebSocket() {
                 // Emit custom events that components can listen to
                 window.dispatchEvent(new CustomEvent(message.type, { detail: message.data }));
                 break;
-              
-              default:
-                console.log('Unknown WebSocket message type:', message.type);
             }
           } catch (error) {
             console.error('Error parsing WebSocket message:', error);
           }
         };
 
-        wsRef.current.onclose = (event) => {
-          console.log('WebSocket disconnected:', event.reason);
+        wsRef.current.onclose = () => {
           setIsConnected(false);
-          
+
           // Attempt to reconnect after 3 seconds
           setTimeout(connect, 3000);
         };
@@ -84,8 +78,6 @@ export function useWebSocket() {
   const sendMessage = (message: WebSocketMessage) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
-    } else {
-      console.warn('WebSocket is not connected');
     }
   };
 
