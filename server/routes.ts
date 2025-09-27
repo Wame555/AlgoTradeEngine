@@ -27,7 +27,7 @@ import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradi
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
-import { get24hChangeForSymbols } from "./services/market24h";
+import { get24hChangeForSymbols, resolveSymbolsForMarketChange } from "./services/market24h";
 import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
 import { startRiskWatcher } from "./services/riskWatcher";
 import { getAccountSnapshot, updateAccountSnapshot } from "./state/accountSnapshot";
@@ -1191,25 +1191,20 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/market/24h", async (req, res) => {
     try {
       const symbolsParam = typeof req.query.symbols === "string" ? req.query.symbols : undefined;
-      let symbols: string[] = [];
+      const requestedSymbols = symbolsParam
+        ? symbolsParam
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+        : [];
 
-      if (symbolsParam) {
-        symbols = symbolsParam
-          .split(",")
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0);
-      } else {
-        const pairs = await storage.getAllTradingPairs();
-        symbols = pairs.map((pair) => pair.symbol);
-      }
+      const symbols = await resolveSymbolsForMarketChange(requestedSymbols);
 
-      const uniqueSymbols = Array.from(new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean)));
-
-      if (uniqueSymbols.length === 0) {
+      if (symbols.length === 0) {
         return res.json({ items: [] });
       }
 
-      const items = await get24hChangeForSymbols(uniqueSymbols);
+      const items = await get24hChangeForSymbols(symbols);
       res.json({ items });
     } catch (error) {
       respondWithError(res, "GET /api/market/24h", error, "Failed to fetch 24h market change");
@@ -1384,7 +1379,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
         void telegramService.sendNotification(
           "❌ Failed to open position: No market price available for the selected symbol",
         );
-        return res.status(400).json({ message: "No market price available for the selected symbol" });
+        return res
+          .status(400)
+          .json({ code: "BAD_REQUEST", message: "No market price available for the selected symbol" });
       }
 
       const priceDecimal = new Decimal(lastPrice as number);
@@ -1395,14 +1392,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
       if (mode === "QTY") {
         qtyDecimal = decimalOrNull(payload.qty);
         if (!qtyDecimal || qtyDecimal.lte(0)) {
-          return res.status(400).json({ message: "Quantity must be greater than zero" });
+          return res.status(400).json({ code: "BAD_REQUEST", message: "Quantity must be greater than zero" });
         }
         amountUsdDecimal = qtyDecimal.times(priceDecimal);
         requiredUsdDecimal = amountUsdDecimal;
       } else {
         amountUsdDecimal = decimalOrNull(payload.usdtAmount);
         if (!amountUsdDecimal || amountUsdDecimal.lte(0)) {
-          return res.status(400).json({ message: "USDT amount must be greater than zero" });
+          return res.status(400).json({ code: "BAD_REQUEST", message: "USDT amount must be greater than zero" });
         }
 
         const tradingPair = await storage.getTradingPair(symbol);
@@ -1426,16 +1423,18 @@ export function registerRoutes(app: Express, deps: Deps): void {
           amountUsdDecimal = qtyDecimal.times(priceDecimal);
         } catch (error) {
           if (error instanceof QuantityValidationError) {
-            return res.status(400).json({ message: error.message });
+            return res.status(400).json({ code: "BAD_REQUEST", message: error.message });
           }
-          return res.status(400).json({ message: "Failed to calculate order quantity" });
+          return res.status(400).json({ code: "BAD_REQUEST", message: "Failed to calculate order quantity" });
         }
 
         requiredUsdDecimal = amountUsdDecimal;
       }
 
       if (!qtyDecimal || qtyDecimal.lte(0)) {
-        return res.status(400).json({ message: "Position size could not be determined" });
+        return res
+          .status(400)
+          .json({ code: "BAD_REQUEST", message: "Position size could not be determined" });
       }
 
       if (!requiredUsdDecimal || !requiredUsdDecimal.isFinite()) {
@@ -1452,7 +1451,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const qtyStr = formatDecimal(qtyDecimal, 8);
       const orderQty = Number(qtyStr);
       if (!Number.isFinite(orderQty) || orderQty <= 0) {
-        return res.status(400).json({ message: "Order quantity is invalid" });
+        return res.status(400).json({ code: "BAD_REQUEST", message: "Order quantity is invalid" });
       }
 
       const brokerSide = side === "LONG" ? "BUY" : "SELL";
@@ -1465,7 +1464,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       if (!order) {
         void telegramService.sendNotification("❌ Failed to open position: Order execution failed");
-        return res.status(400).json({ message: "Failed to execute trade" });
+        return res.status(400).json({ code: "BAD_REQUEST", message: "Failed to execute trade" });
       }
 
       const entryFill = decimalOrNull(order.fills?.[0]?.price) ?? priceDecimal;
@@ -1485,18 +1484,20 @@ export function registerRoutes(app: Express, deps: Deps): void {
         providedTp &&
         ((side === "LONG" && providedTp.lte(entryFill)) || (side === "SHORT" && providedTp.gte(entryFill)))
       ) {
-        return res
-          .status(400)
-          .json({ message: "Take profit must be beyond the entry price for the selected side" });
+        return res.status(400).json({
+          code: "BAD_REQUEST",
+          message: "Take profit must be beyond the entry price for the selected side",
+        });
       }
 
       if (
         providedSl &&
         ((side === "LONG" && providedSl.gte(entryFill)) || (side === "SHORT" && providedSl.lte(entryFill)))
       ) {
-        return res
-          .status(400)
-          .json({ message: "Stop loss must be beyond the entry price for the selected side" });
+        return res.status(400).json({
+          code: "BAD_REQUEST",
+          message: "Stop loss must be beyond the entry price for the selected side",
+        });
       }
 
       const takeProfitPrice =
@@ -1552,7 +1553,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
       });
 
       broadcast({ type: "position_opened", data: result });
-      res.json(result);
+      const responseOrderId = typeof order.orderId === "string" && order.orderId
+        ? order.orderId
+        : typeof result.orderId === "string"
+          ? result.orderId
+          : undefined;
+      res.status(201).json({ orderId: responseOrderId ?? null, accepted: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void telegramService.sendNotification(`❌ Failed to open position: ${message}`);
@@ -1956,8 +1962,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const symbol = rawSymbol.toUpperCase();
       const { user } = await ensureDefaultUser();
       const rows = await storage.getUserPairSettings(user.id, symbol);
-      const activeTimeframes = rows[0]?.activeTimeframes ?? [];
-      res.json({ symbol, activeTimeframes });
+      const firstRow = rows[0];
+      const activeTimeframes = Array.isArray(firstRow?.activeTimeframes) ? [...firstRow.activeTimeframes] : [];
+      res.json({ activeTimeframes });
     } catch (error) {
       respondWithError(res, "GET /api/pairs/:symbol/settings", error, "Failed to fetch pair settings");
     }
@@ -1982,7 +1989,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
         activeTimeframes,
       });
 
-      res.json({ symbol: result.symbol, activeTimeframes: result.activeTimeframes ?? [] });
+      res.json({ activeTimeframes: Array.isArray(result.activeTimeframes) ? result.activeTimeframes : [] });
     } catch (error) {
       respondWithError(res, "PATCH /api/pairs/:symbol/settings", error, "Failed to save pair settings");
     }

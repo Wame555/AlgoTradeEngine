@@ -8,6 +8,10 @@ type RawRow = {
   ts: Date | string;
 };
 
+type SymbolRow = {
+  symbol: string | null;
+};
+
 export interface Market24hChangeItem {
   symbol: string;
   last: number | null;
@@ -17,6 +21,27 @@ export interface Market24hChangeItem {
 
 function normalizeSymbol(value: string): string {
   return value.trim().toUpperCase();
+}
+
+function normalizeSymbols(values: Iterable<string>): string[] {
+  const result = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeSymbol(value);
+    if (normalized.length > 0) {
+      result.add(normalized);
+    }
+  }
+  return Array.from(result);
+}
+
+function parseCsv(value: string | undefined | null): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function toDecimal(value: unknown): Decimal | null {
@@ -52,6 +77,97 @@ function parseRows(rows: RawRow[]): Map<string, { close: Decimal; ts: Date }[]> 
     map.set(symbol, list);
   }
   return map;
+}
+
+async function tableExists(tableName: string): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = $1
+      ) AS exists;
+    `,
+    [tableName],
+  );
+  return Boolean(result.rows[0]?.exists);
+}
+
+async function getColumnNames(tableName: string): Promise<Set<string>> {
+  const result = await pool.query<{ column_name: string }>(
+    `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = $1;
+    `,
+    [tableName],
+  );
+  const columns = new Set<string>();
+  for (const row of result.rows) {
+    if (row?.column_name) {
+      columns.add(row.column_name.toLowerCase());
+    }
+  }
+  return columns;
+}
+
+async function fetchSymbolsFromTable(tableName: string): Promise<string[]> {
+  if (!(await tableExists(tableName))) {
+    return [];
+  }
+
+  const columns = await getColumnNames(tableName);
+  let whereClause = "";
+  if (columns.has("is_active")) {
+    whereClause = 'WHERE "is_active" = true';
+  } else if (columns.has("active")) {
+    whereClause = 'WHERE "active" = true';
+  }
+
+  const query = `SELECT symbol FROM public."${tableName}" ${whereClause}`;
+  try {
+    const result = await pool.query<SymbolRow>(query);
+    const symbols = result.rows
+      .map((row) => row.symbol ?? "")
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return normalizeSymbols(symbols);
+  } catch {
+    return [];
+  }
+}
+
+export async function getActiveSymbolsFromDatabase(): Promise<string[]> {
+  const candidates = ["trading_pairs", "pairs", "symbols"] as const;
+  for (const tableName of candidates) {
+    const symbols = await fetchSymbolsFromTable(tableName);
+    if (symbols.length > 0) {
+      return symbols;
+    }
+  }
+  return [];
+}
+
+export async function resolveSymbolsForMarketChange(requestedSymbols: string[] = []): Promise<string[]> {
+  const requested = normalizeSymbols(requestedSymbols);
+  const active = await getActiveSymbolsFromDatabase();
+
+  if (active.length > 0) {
+    if (requested.length === 0) {
+      return active;
+    }
+    const activeSet = new Set(active);
+    const filtered = requested.filter((symbol) => activeSet.has(symbol));
+    return filtered.length > 0 ? filtered : requested;
+  }
+
+  if (requested.length > 0) {
+    return requested;
+  }
+
+  const envSymbols = parseCsv(process.env.SYMBOL_LIST);
+  return normalizeSymbols(envSymbols);
 }
 
 export async function get24hChangeForSymbols(symbols: string[]): Promise<Market24hChangeItem[]> {
