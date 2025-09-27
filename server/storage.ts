@@ -107,6 +107,7 @@ export interface IStorage {
 
 function mapPositionRow(row: Record<string, any>): Position {
   const qtyValue = row.qty ?? row.size ?? undefined;
+  const amountUsdValue = row.amount_usd ?? row.size ?? undefined;
   return {
     id: row.id,
     userId: row.user_id,
@@ -114,6 +115,8 @@ function mapPositionRow(row: Record<string, any>): Position {
     side: row.side,
     size: row.size,
     qty: qtyValue ?? undefined,
+    amountUsd: amountUsdValue ?? undefined,
+    leverage: row.leverage ?? undefined,
     entryPrice: row.entry_price,
     currentPrice: row.current_price ?? undefined,
     pnl: row.pnl ?? undefined,
@@ -189,6 +192,7 @@ export class DatabaseStorage implements IStorage {
       demoEnabled: "demo_enabled",
       defaultTpPct: "default_tp_pct",
       defaultSlPct: "default_sl_pct",
+      totalBalance: "total_balance",
     };
 
     const insertPayload = {

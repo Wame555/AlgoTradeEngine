@@ -15,6 +15,7 @@ export function useOpenPositions() {
         ...position,
         qty: position?.qty ?? "0",
         sizeUsd: position?.sizeUsd ?? "0",
+        amountUsd: position?.amountUsd ?? position?.sizeUsd ?? "0",
         pnlUsd: position?.pnlUsd ?? "0",
       })),
   });

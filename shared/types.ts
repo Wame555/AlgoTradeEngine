@@ -32,6 +32,8 @@ export interface OpenPositionResponse {
   entryPrice: string;
   currentPrice?: string;
   pnlUsd: string;
+  amountUsd?: string | null;
+  leverage?: string | null;
   tpPrice?: string | null;
   slPrice?: string | null;
   status: string;
@@ -50,4 +52,5 @@ export interface StatsSummaryResponse {
   balance: number;
   equity: number;
   openPnL: number;
+  totalBalance?: number;
 }

@@ -62,6 +62,7 @@ export function useStatsSummary() {
     balance: 0,
     equity: 0,
     openPnL: 0,
+    totalBalance: 0,
   };
 
   return useQuery<StatsSummary>({

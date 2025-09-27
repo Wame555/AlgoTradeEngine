@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,6 +52,19 @@ export default function Settings() {
   const userId = session?.userId ?? "";
   const [isPatchDialogOpen, setIsPatchDialogOpen] = useState(false);
   const [patchValues, setPatchValues] = useState({ initialBalance: "", feesMultiplier: "" });
+  const [totalBalanceInput, setTotalBalanceInput] = useState("");
+
+  const { data: accountBalanceData, isLoading: isLoadingAccountBalance } = useQuery<{ totalBalance: number }>({
+    queryKey: ['/api/settings/account'],
+    staleTime: 60 * 1000,
+    enabled: Boolean(userId),
+  });
+
+  useEffect(() => {
+    if (accountBalanceData?.totalBalance != null && Number.isFinite(accountBalanceData.totalBalance)) {
+      setTotalBalanceInput(accountBalanceData.totalBalance.toFixed(2));
+    }
+  }, [accountBalanceData?.totalBalance]);
 
   const resetStatsMutation = useMutation({
     mutationFn: async () => {
@@ -93,6 +106,36 @@ export default function Settings() {
         title: "Error",
         description: error.message || "Failed to apply account patch",
         variant: "destructive",
+      });
+    },
+  });
+
+  const accountBalanceMutation = useMutation({
+    mutationFn: async (payload: { totalBalance: number }) => {
+      const res = await apiRequest('PATCH', '/api/settings/account', payload);
+      return (await res.json()) as { totalBalance: number };
+    },
+    onSuccess: (data) => {
+      const nextValue = Number(data?.totalBalance ?? 0);
+      setTotalBalanceInput(nextValue.toFixed(2));
+      toast({
+        title: 'Account balance updated',
+        description: 'Total balance saved successfully.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/settings/account'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats/change'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/account'] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/settings', userId] });
+      }
+    },
+    onError: (error: any) => {
+      const message = error instanceof Error ? error.message : 'Failed to update total balance';
+      toast({
+        title: 'Error',
+        description: message,
+        variant: 'destructive',
       });
     },
   });
@@ -230,6 +273,33 @@ export default function Settings() {
     accountPatchMutation.mutate(payload);
   };
 
+  const handleAccountBalanceSave = () => {
+    if (!userId) {
+      toast({
+        title: 'Missing user',
+        description: 'User session is not ready yet.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const numeric = Number(totalBalanceInput);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      toast({
+        title: 'Invalid value',
+        description: 'Total balance must be a non-negative number',
+        variant: 'destructive',
+      });
+      return;
+    }
+    accountBalanceMutation.mutate({ totalBalance: numeric });
+  };
+
+  const currentTotalBalance =
+    accountBalanceMutation.data?.totalBalance ??
+    accountBalanceData?.totalBalance ??
+    Number(totalBalanceInput || 0);
+  const formattedTotalBalance = `$${formatUsd(Number.isFinite(currentTotalBalance) ? currentTotalBalance : 0)}`;
+
   if (isLoading || !userId) {
     return (
       <div className="p-6">
@@ -332,6 +402,45 @@ export default function Settings() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <DollarSign className="h-5 w-5" />
+            <span>Account Balance</span>
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Update the total balance used for summary metrics and equity calculations.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-sm text-muted-foreground">Current Total Balance</div>
+              <div className="text-2xl font-semibold">{formattedTotalBalance}</div>
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center">
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={totalBalanceInput}
+                onChange={(event) => setTotalBalanceInput(event.target.value)}
+                disabled={isLoadingAccountBalance || accountBalanceMutation.isPending || !userId}
+                placeholder="10000"
+                data-testid="input-total-balance"
+              />
+              <Button
+                onClick={handleAccountBalanceSave}
+                disabled={isLoadingAccountBalance || accountBalanceMutation.isPending || !userId}
+                data-testid="button-save-total-balance"
+              >
+                {accountBalanceMutation.isPending ? 'Saving...' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">

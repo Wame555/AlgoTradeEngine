@@ -160,7 +160,7 @@ export default function Positions({ priceData }: PositionsProps) {
     let qty = Number(position.qty ?? 0);
 
     if (!Number.isFinite(qty) || qty <= 0) {
-      const sizeUsd = Number(position.sizeUsd ?? 0);
+      const sizeUsd = Number(position.amountUsd ?? position.sizeUsd ?? 0);
       if (Number.isFinite(sizeUsd) && sizeUsd > 0 && Number.isFinite(entryPrice) && entryPrice > 0) {
         qty = sizeUsd / entryPrice;
       }
@@ -277,7 +277,7 @@ export default function Positions({ priceData }: PositionsProps) {
                     <TableRow>
                       <TableHead>Symbol</TableHead>
                       <TableHead>Side</TableHead>
-                      <TableHead>Size (USD)</TableHead>
+                      <TableHead>Amount (USD)</TableHead>
                       <TableHead>Amount (qty)</TableHead>
                       <TableHead>Entry</TableHead>
                       <TableHead>Current Price</TableHead>
@@ -290,6 +290,14 @@ export default function Positions({ priceData }: PositionsProps) {
                     {positions.map((position) => {
                       const priceInfo = priceData.get(position.symbol);
                       const currentPrice = priceInfo?.price ?? position.currentPrice ?? position.entryPrice;
+                      const entryPriceValue = Number(position.entryPrice ?? 0);
+                      let amountUsdValue = Number(position.amountUsd ?? position.sizeUsd ?? 0);
+                      const qtyValue = Number(position.qty ?? 0);
+                      if (!Number.isFinite(amountUsdValue) || amountUsdValue <= 0) {
+                        if (Number.isFinite(qtyValue) && qtyValue > 0 && Number.isFinite(entryPriceValue) && entryPriceValue > 0) {
+                          amountUsdValue = qtyValue * entryPriceValue;
+                        }
+                      }
                       const pnl = calculatePnL(position, priceInfo?.price ?? currentPrice);
                       const pnlColor = trendClass(pnl);
                       const tpDisplay = formatPrice(position.tpPrice, 2);
@@ -310,7 +318,7 @@ export default function Positions({ priceData }: PositionsProps) {
                               {position.side}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-mono">{formatCurrency(position.sizeUsd)}</TableCell>
+                          <TableCell className="font-mono">{formatCurrency(amountUsdValue)}</TableCell>
                           <TableCell className="font-mono">{formatQty(position.qty)}</TableCell>
                           <TableCell className="font-mono">{formatPrice(position.entryPrice)}</TableCell>
                           <TableCell className="font-mono" data-testid={`position-price-${position.id}`}>
