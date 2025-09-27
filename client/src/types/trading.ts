@@ -93,6 +93,7 @@ export interface UserSettings {
   demoEnabled: boolean;
   defaultTpPct: string;
   defaultSlPct: string;
+  totalBalance: string;
   createdAt: string;
   updatedAt: string;
 }

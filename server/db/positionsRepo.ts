@@ -10,14 +10,23 @@ const SELECT_COLUMNS = `
   "symbol",
   "side",
   "size",
-  "size" AS qty,
+  COALESCE(
+    "qty",
+    CASE
+      WHEN "size" IS NOT NULL AND "entry_price" IS NOT NULL AND "entry_price" <> 0
+        THEN ROUND("size" / NULLIF("entry_price", 0), 8)
+      ELSE NULL
+    END
+  ) AS qty,
   "entry_price",
   "current_price",
   "pnl",
   "stop_loss",
   "take_profit",
-  "tp_price",
-  "sl_price",
+  COALESCE("tp_price", "take_profit") AS tp_price,
+  COALESCE("sl_price", "stop_loss") AS sl_price,
+  "leverage",
+  COALESCE("amount_usd", "size") AS amount_usd,
   "trailing_stop_percent",
   "status",
   "order_id",
@@ -32,14 +41,23 @@ const SELECT_COLUMNS_ALIAS = `
   p."symbol",
   p."side",
   p."size",
-  p."size" AS qty,
+  COALESCE(
+    p."qty",
+    CASE
+      WHEN p."size" IS NOT NULL AND p."entry_price" IS NOT NULL AND p."entry_price" <> 0
+        THEN ROUND(p."size" / NULLIF(p."entry_price", 0), 8)
+      ELSE NULL
+    END
+  ) AS qty,
   p."entry_price",
   p."current_price",
   p."pnl",
   p."stop_loss",
   p."take_profit",
-  p."tp_price",
-  p."sl_price",
+  COALESCE(p."tp_price", p."take_profit") AS tp_price,
+  COALESCE(p."sl_price", p."stop_loss") AS sl_price,
+  p."leverage",
+  COALESCE(p."amount_usd", p."size") AS amount_usd,
   p."trailing_stop_percent",
   p."status",
   p."order_id",
@@ -54,7 +72,9 @@ const COLUMN_MAP: Record<string, string> = {
   symbol: "symbol",
   side: "side",
   size: "size",
-  qty: "size",
+  qty: "qty",
+  amountUsd: "amount_usd",
+  leverage: "leverage",
   entryPrice: "entry_price",
   currentPrice: "current_price",
   pnl: "pnl",
@@ -81,9 +101,12 @@ async function query<T = PositionRow>(sql: string, params: any[] = []): Promise<
   return result.rows as T[];
 }
 
-function normaliseSize(data: { size?: unknown; qty?: unknown }): unknown {
+function normaliseSize(data: { size?: unknown; amountUsd?: unknown; qty?: unknown }): unknown {
   if (data.size != null && data.size !== undefined) {
     return data.size;
+  }
+  if (data.amountUsd != null && data.amountUsd !== undefined) {
+    return data.amountUsd;
   }
   return data.qty;
 }
@@ -169,7 +192,6 @@ export async function insertPosition(data: InsertPositionInput): Promise<Positio
     throw new Error("Position size is required");
   }
   payload.size = normalisedSize;
-  delete payload.qty;
 
   if (!payload.updatedAt) {
     payload.updatedAt = new Date();
@@ -207,7 +229,6 @@ export async function updatePosition(
   if (normalisedSize != null) {
     payload.size = normalisedSize;
   }
-  delete payload.qty;
 
   payload.updatedAt = payload.updatedAt ?? new Date();
 
@@ -244,7 +265,6 @@ export async function updatePositionsByIds(
   if (normalisedSize != null) {
     payload.size = normalisedSize;
   }
-  delete payload.qty;
 
   payload.updatedAt = payload.updatedAt ?? new Date();
 

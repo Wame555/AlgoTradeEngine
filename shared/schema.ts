@@ -66,6 +66,7 @@ export const userSettings = pgTable(
     demoEnabled: boolean("demo_enabled").default(true),
     defaultTpPct: numeric("default_tp_pct", { precision: 5, scale: 2 }).default("1.00"),
     defaultSlPct: numeric("default_sl_pct", { precision: 5, scale: 2 }).default("0.50"),
+    totalBalance: numeric("total_balance", { precision: 18, scale: 2 }).notNull().default("10000.00"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
   },
@@ -100,7 +101,7 @@ export const positions = pgTable("positions", {
   symbol: varchar("symbol", { length: 20 }).notNull(),
   side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
   size: decimal("size", { precision: 18, scale: 8 }).notNull(),
-  qty: decimal("qty", { precision: 18, scale: 8 }),
+  qty: decimal("qty", { precision: 18, scale: 8 }).notNull().default("0"),
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
   currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
   pnl: decimal("pnl", { precision: 18, scale: 8 }).default("0"),
@@ -108,6 +109,8 @@ export const positions = pgTable("positions", {
   takeProfit: decimal("take_profit", { precision: 18, scale: 8 }),
   tpPrice: decimal("tp_price", { precision: 18, scale: 8 }),
   slPrice: decimal("sl_price", { precision: 18, scale: 8 }),
+  leverage: numeric("leverage", { precision: 10, scale: 2 }).notNull().default("1"),
+  amountUsd: numeric("amount_usd", { precision: 18, scale: 2 }),
   trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
   status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
   orderId: varchar("order_id", { length: 50 }),

@@ -34,8 +34,8 @@ export function Header({ isConnected }: HeaderProps) {
     return tradingPairs?.filter((pair) => pair.isActive).length ?? 0;
   }, [tradingPairs]);
 
-  const balance = statsSummary?.balance ?? 0;
-  const equity = statsSummary?.equity ?? balance;
+  const totalBalance = statsSummary?.totalBalance ?? statsSummary?.balance ?? 0;
+  const equity = statsSummary?.equity ?? (totalBalance + (statsSummary?.openPnL ?? 0));
   const openPnL = statsSummary?.openPnL ?? 0;
 
   const formatCurrency = (value?: number) => {
@@ -126,7 +126,7 @@ export function Header({ isConnected }: HeaderProps) {
         <div className="text-right">
           <div className="text-sm text-muted-foreground">Total Balance</div>
           <div className="font-mono text-lg font-semibold" data-testid="total-balance">
-            {formatCurrency(balance)}
+            {formatCurrency(totalBalance)}
           </div>
         </div>
         <div className="text-right">

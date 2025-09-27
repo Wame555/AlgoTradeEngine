@@ -70,7 +70,7 @@ function buildMetric(value: number, partialData: boolean): MetricValue {
 
 function resolveQty(position: Position): number {
   const rawQty = safeNumber(position.qty);
-  const sizeValue = safeNumber(position.size);
+  const sizeValue = safeNumber(position.amountUsd ?? position.size);
   const entryPrice = safeNumber(position.entryPrice);
 
   if (rawQty > 0) {

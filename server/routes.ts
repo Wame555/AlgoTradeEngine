@@ -85,6 +85,7 @@ const DEFAULT_USER_SETTINGS = {
   demoEnabled: true,
   defaultTpPct: "1.00",
   defaultSlPct: "0.50",
+  totalBalance: "10000.00",
 } as const;
 
 async function ensureDemoUserRecord(): Promise<User> {
@@ -284,9 +285,15 @@ const accountSettingsPatchSchema = z
     demoEnabled: z.boolean().optional(),
     defaultTpPct: z.union([z.number(), z.string()]).optional(),
     defaultSlPct: z.union([z.number(), z.string()]).optional(),
+    totalBalance: z.union([z.number(), z.string()]).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.demoEnabled == null && value.defaultTpPct == null && value.defaultSlPct == null) {
+    if (
+      value.demoEnabled == null &&
+      value.defaultTpPct == null &&
+      value.defaultSlPct == null &&
+      value.totalBalance == null
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Provide at least one field to update",
@@ -510,7 +517,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   const resolveQty = (position: Position): number => {
     const rawQty = parseNumeric(position.qty);
-    const sizeValue = parseNumeric(position.size);
+    const sizeValue = parseNumeric(position.amountUsd ?? position.size);
     const entry = parseNumeric(position.entryPrice);
 
     if (typeof rawQty === "number" && rawQty > 0) {
@@ -534,9 +541,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
   };
 
   const resolveSizeUsd = (position: Position, qty: number, entryPrice: number): number => {
-    const stored = parseNumeric(position.size);
-    if (typeof stored === "number" && stored > 0) {
-      return stored;
+    const storedAmount = parseNumeric(position.amountUsd ?? position.size);
+    if (typeof storedAmount === "number" && storedAmount > 0) {
+      return storedAmount;
     }
     if (qty > 0 && entryPrice > 0) {
       const computed = qty * entryPrice;
@@ -615,7 +622,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       userId: position.userId,
       symbol: position.symbol,
       side: position.side,
-      size: qtyStr ?? (position.qty ?? position.size ?? "0"),
+      size: qtyStr ?? (position.qty ?? position.amountUsd ?? position.size ?? "0"),
       entryPrice: position.entryPrice,
       exitPrice: exitPriceStr,
       feeUsd: feeStr,
@@ -656,6 +663,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
     const entryPrice = parseNumeric(position.entryPrice) ?? 0;
     const qty = resolveQty(position);
     const sizeUsd = resolveSizeUsd(position, qty, entryPrice);
+    const storedAmountUsd = parseNumeric(position.amountUsd);
+    const amountUsdValue = typeof storedAmountUsd === "number" && storedAmountUsd > 0 ? storedAmountUsd : sizeUsd;
+    const leverageValue = parseNumeric(position.leverage);
     const lastPrice = getPaperLastPrice(position.symbol);
     const storedCurrent = parseNumeric(position.currentPrice);
     const marketPrice =
@@ -678,16 +688,20 @@ export function registerRoutes(app: Express, deps: Deps): void {
         : position.closedAt != null
         ? String(position.closedAt)
         : undefined;
+    const leverageStr =
+      typeof leverageValue === "number" && leverageValue > 0 ? toDecimalString(leverageValue, 2) : undefined;
 
     return {
       id: String(position.id),
       symbol: position.symbol,
       side: position.side as "LONG" | "SHORT",
       sizeUsd: toDecimalString(sizeUsd),
+      amountUsd: toDecimalString(amountUsdValue, 2),
       qty: toDecimalString(qty),
       entryPrice: toDecimalString(entryPrice),
       currentPrice: currentPriceStr,
       pnlUsd: toDecimalString(pnlUsd),
+      leverage: leverageStr,
       tpPrice,
       slPrice,
       status: position.status ?? "OPEN",
@@ -900,6 +914,17 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
+  app.get("/api/settings/account", async (_req, res) => {
+    try {
+      const { settings } = await ensureDefaultUser();
+      const totalBalanceValue = Number(settings.totalBalance ?? 0);
+      const totalBalance = Number.isFinite(totalBalanceValue) ? totalBalanceValue : 0;
+      res.json({ totalBalance });
+    } catch (error) {
+      respondWithError(res, "GET /api/settings/account", error, "Failed to fetch account settings");
+    }
+  });
+
   app.post("/api/settings", async (req, res) => {
     try {
       const settings = insertUserSettingsSchema.parse(req.body);
@@ -930,7 +955,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const base: any = existing
         ? { ...existing }
-        : { userId: user.id, isTestnet: true, defaultLeverage: 1, riskPercent: 2, demoEnabled: true };
+        : { userId: user.id, ...DEFAULT_USER_SETTINGS };
 
       delete base.id;
       delete base.createdAt;
@@ -956,10 +981,23 @@ export function registerRoutes(app: Express, deps: Deps): void {
         base.defaultSlPct = value;
       }
 
+      if (patch.totalBalance != null) {
+        const value = Number(patch.totalBalance);
+        if (!Number.isFinite(value) || value < 0) {
+          return res.status(400).json({ message: "Total balance must be a non-negative number" });
+        }
+        base.totalBalance = value.toFixed(2);
+      }
+
+      if (base.totalBalance == null && existing?.totalBalance != null) {
+        base.totalBalance = existing.totalBalance;
+      }
+
       base.userId = user.id;
 
       const result = await storage.upsertUserSettings(base);
-      res.json(result);
+      const responseBalance = Number(result.totalBalance ?? base.totalBalance ?? 0);
+      res.json({ totalBalance: Number.isFinite(responseBalance) ? responseBalance : 0 });
     } catch (error) {
       respondWithError(res, "PATCH /api/settings/account", error, "Failed to update account settings");
     }
@@ -1077,6 +1115,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
         currentPrice: entryPrice,
         size: sizeUsdStr,
         qty: qtyStr,
+        amountUsd: sizeUsdStr,
         stopLoss: stopLossPrice ?? undefined,
         takeProfit: takeProfitPrice ?? undefined,
         slPrice: stopLossPrice ?? undefined,
@@ -1297,14 +1336,17 @@ export function registerRoutes(app: Express, deps: Deps): void {
       balance: 0,
       equity: 0,
       openPnL: 0,
+      totalBalance: 0,
     };
 
     try {
+      const { settings } = await ensureDefaultUser();
       const [closedRows, accountRows, openPositionRows] = await Promise.all([
         db.select().from(closedPositions),
         db.select().from(paperAccounts).limit(1),
         storage.getAllOpenPositions(),
       ]);
+      const totalBalanceSetting = Number(settings.totalBalance ?? 0);
 
       const computeClosedPnl = (row: (typeof closedRows)[number]) => {
         const entryPx = Number(row.entryPrice ?? 0);
@@ -1348,7 +1390,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
         .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
       const balanceRow = accountRows[0];
-      const balance = parseNumeric(balanceRow?.balance) ?? 0;
+      const fallbackBalance = parseNumeric(balanceRow?.balance) ?? 0;
+      const balance = Number.isFinite(totalBalanceSetting) ? totalBalanceSetting : fallbackBalance;
 
       let openPnL = 0;
       if (openPositionRows.length > 0) {
@@ -1422,6 +1465,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
         balance,
         equity,
         openPnL,
+        totalBalance: balance,
       };
 
       res.json(payload);
