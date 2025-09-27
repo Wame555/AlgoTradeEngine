@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { cached, MICRO_CACHE_TTL_MS } from "./cache/apiCache";
+import { cached, MICRO_CACHE_TTL_MS, clearCacheKey } from "./cache/apiCache";
 import { and, desc, eq } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
@@ -27,17 +27,13 @@ import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
 import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
+import { startRiskWatcher } from "./services/riskWatcher";
 import { logError } from "./utils/logger";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
-import { getChangePct, getPnlByTimeframes, getLastPrice as getMetricsLastPrice } from "./services/metrics";
-import {
-  SUPPORTED_TIMEFRAMES,
-  type OpenPositionResponse,
-  type SupportedTimeframe,
-  type StatsSummaryResponse,
-} from "@shared/types";
+import { getLastPrice as getMetricsLastPrice } from "./services/metrics";
+import { type OpenPositionResponse, type StatsSummaryResponse } from "@shared/types";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
@@ -298,6 +294,11 @@ const accountSettingsPatchSchema = z
     }
   });
 
+const riskPatchSchema = z.object({
+  tpPrice: z.union([z.number(), z.string(), z.null()]).optional(),
+  slPrice: z.union([z.number(), z.string(), z.null()]).optional(),
+});
+
 const tradeCloseSchema = z.object({
   positionId: z.string().min(1),
   exitPrice: z.union([z.number(), z.string()]).optional(),
@@ -503,6 +504,36 @@ export function registerRoutes(app: Express, deps: Deps): void {
     return Number.isFinite(parsed) ? parsed : undefined;
   };
 
+  const toDecimalString = (value: number, decimals: number = 8): string => {
+    return Number.isFinite(value) ? value.toFixed(decimals) : (0).toFixed(decimals);
+  };
+
+  const resolveQty = (position: Position): number => {
+    const storedQty = parseNumeric(position.qty);
+    if (typeof storedQty === "number" && storedQty > 0) {
+      return Number(storedQty.toFixed(8));
+    }
+    const sizeUsd = parseNumeric(position.size);
+    const entry = parseNumeric(position.entryPrice);
+    if (typeof sizeUsd === "number" && typeof entry === "number" && entry > 0) {
+      const computed = sizeUsd / entry;
+      return Number.isFinite(computed) ? Number(computed.toFixed(8)) : 0;
+    }
+    return 0;
+  };
+
+  const resolveSizeUsd = (position: Position, qty: number, entryPrice: number): number => {
+    const stored = parseNumeric(position.size);
+    if (typeof stored === "number" && stored > 0) {
+      return stored;
+    }
+    if (qty > 0 && entryPrice > 0) {
+      const computed = qty * entryPrice;
+      return Number.isFinite(computed) ? computed : 0;
+    }
+    return 0;
+  };
+
   const computeDefaultTargets = (
     side: "LONG" | "SHORT",
     entryPrice: number,
@@ -535,11 +566,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   const computePnlForPosition = (position: Position, exitPrice: number) => {
     const entry = parseNumeric(position.entryPrice) ?? 0;
-    const size = parseNumeric(position.size) ?? 0;
+    const qty = resolveQty(position);
+    if (qty <= 0) {
+      return 0;
+    }
     const pnl =
       position.side === "LONG"
-        ? (exitPrice - entry) * size
-        : (entry - exitPrice) * size;
+        ? (exitPrice - entry) * qty
+        : (entry - exitPrice) * qty;
     return Number.isFinite(pnl) ? pnl : 0;
   };
 
@@ -550,11 +584,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
   ) => {
     const exit = Number.isFinite(exitPrice) ? exitPrice : parseNumeric(position.currentPrice) ?? parseNumeric(position.entryPrice) ?? 0;
     const feeUsd = Number.isFinite(feeUsdInput ?? NaN) ? Number(feeUsdInput) : 0;
-    const grossPnl = computePnlForPosition(position, exit);
+    const qty = resolveQty(position);
+    const grossPnl = qty > 0 ? computePnlForPosition(position, exit) : 0;
     const netPnl = grossPnl - (Number.isFinite(feeUsd) ? feeUsd : 0);
-    const exitPriceStr = exit.toFixed(8);
-    const feeStr = feeUsd.toFixed(8);
-    const pnlStr = netPnl.toFixed(8);
+    const exitPriceStr = toDecimalString(exit);
+    const feeStr = toDecimalString(feeUsd);
+    const pnlStr = toDecimalString(netPnl);
     const closedAt = new Date();
 
     const updated = await storage.closePosition(position.id, {
@@ -563,12 +598,13 @@ export function registerRoutes(app: Express, deps: Deps): void {
     });
 
     const openedAt = position.openedAt instanceof Date ? position.openedAt : new Date(position.openedAt ?? Date.now());
+    const qtyStr = qty > 0 ? toDecimalString(qty) : undefined;
 
     const closedRecord = await storage.insertClosedPosition({
       userId: position.userId,
       symbol: position.symbol,
       side: position.side,
-      size: position.size,
+      size: qtyStr ?? (position.qty ?? position.size ?? "0"),
       entryPrice: position.entryPrice,
       exitPrice: exitPriceStr,
       feeUsd: feeStr,
@@ -578,21 +614,106 @@ export function registerRoutes(app: Express, deps: Deps): void {
     });
 
     console.info(
-      `[trade] closed ${position.symbol} ${position.side} qty=${position.size} exit=${exitPriceStr} pnl=${pnlStr}`,
+      `[trade] closed ${position.symbol} ${position.side} qty=${qtyStr ?? position.qty ?? position.size ?? ''} exit=${exitPriceStr} pnl=${pnlStr}`,
     );
     void telegramService.sendTradeNotification({
       action: 'closed',
       symbol: position.symbol,
       side: position.side,
-      size: String(position.size ?? ''),
+      size: qtyStr ?? String(position.qty ?? position.size ?? ''),
       price: exitPriceStr,
       pnl: pnlStr,
-      stopLoss: updated.stopLoss ?? undefined,
-      takeProfit: updated.takeProfit ?? undefined,
+      stopLoss: updated.stopLoss ?? updated.slPrice ?? undefined,
+      takeProfit: updated.takeProfit ?? updated.tpPrice ?? undefined,
     });
 
-    return { updated, closedRecord, pnlUsd: netPnl, exitPrice: exitPriceStr, feeUsd: feeStr };
+    clearCacheKey("positions:open");
+    clearCacheKey(`positions:open:${position.userId}`);
+
+    return { updated, closedRecord, pnlUsd: netPnl, exitPrice: exitPriceStr, feeUsd: feeStr, qty };
   };
+
+  const formatOptionalPrice = (raw: unknown): string | null => {
+    const numeric = parseNumeric(raw);
+    if (typeof numeric === "number" && numeric > 0) {
+      return toDecimalString(numeric);
+    }
+    return null;
+  };
+
+  const buildOpenPositionResponse = (position: Position): OpenPositionResponse => {
+    const entryPrice = parseNumeric(position.entryPrice) ?? 0;
+    const qty = resolveQty(position);
+    const sizeUsd = resolveSizeUsd(position, qty, entryPrice);
+    const lastPrice = getPaperLastPrice(position.symbol);
+    const storedCurrent = parseNumeric(position.currentPrice);
+    const marketPrice =
+      typeof lastPrice === "number" && Number.isFinite(lastPrice)
+        ? lastPrice
+        : storedCurrent ?? entryPrice;
+    const pnlUsd = qty > 0 ? computePnlForPosition(position, marketPrice) : 0;
+    const tpPrice = formatOptionalPrice(position.tpPrice ?? position.takeProfit);
+    const slPrice = formatOptionalPrice(position.slPrice ?? position.stopLoss);
+    const currentPriceStr = Number.isFinite(marketPrice) ? toDecimalString(marketPrice) : undefined;
+    const openedAt =
+      position.openedAt instanceof Date
+        ? position.openedAt.toISOString()
+        : position.openedAt != null
+        ? String(position.openedAt)
+        : new Date().toISOString();
+    const closedAt =
+      position.closedAt instanceof Date
+        ? position.closedAt.toISOString()
+        : position.closedAt != null
+        ? String(position.closedAt)
+        : undefined;
+
+    return {
+      id: String(position.id),
+      symbol: position.symbol,
+      side: position.side as "LONG" | "SHORT",
+      sizeUsd: toDecimalString(sizeUsd),
+      qty: toDecimalString(qty),
+      entryPrice: toDecimalString(entryPrice),
+      currentPrice: currentPriceStr,
+      pnlUsd: toDecimalString(pnlUsd),
+      tpPrice,
+      slPrice,
+      status: position.status ?? "OPEN",
+      openedAt,
+      closedAt,
+      userId: position.userId,
+      orderId: position.orderId ?? undefined,
+    };
+  };
+
+  startRiskWatcher({
+    fetchOpenPositions: () => storage.getAllOpenPositions(),
+    resolveLastPrice: getPaperLastPrice,
+    intervalMs: 750,
+    cacheTtlMs: 1000,
+    onTrigger: async (position, trigger, executionPrice) => {
+      try {
+        const { updated, pnlUsd } = await closePositionAndRecord(position, executionPrice, 0);
+        const label = trigger === "TP" ? "TP" : "SL";
+        console.info(
+          `[riskWatcher] closed ${position.symbol} ${position.side} via ${label} at ${toDecimalString(executionPrice)}`,
+        );
+        void telegramService.sendNotification(
+          `Closed ${position.symbol} ${position.side} via ${label} at ${toDecimalString(executionPrice)} (PnL: $${toDecimalString(
+            pnlUsd,
+            2,
+          )})`,
+        );
+        broadcast({ type: "position_closed", data: updated });
+      } catch (error) {
+        console.error(
+          `[riskWatcher] failed to close ${position.symbol} ${position.side} via ${trigger}: ${(error as Error).message ?? error}`,
+        );
+      }
+    },
+  });
+
 
   app.get("/api/session", async (_req, res) => {
     try {
@@ -836,89 +957,13 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/positions/open", async (req, res) => {
     try {
       const userId = await resolveUserId(req.query.userId);
+      const cacheKey = userId ? `positions:open:${userId}` : "positions:open";
       const { value: positions } = await cached<OpenPositionResponse[]>(
-        "positions:open",
+        cacheKey,
         MICRO_CACHE_TTL_MS,
         async () => {
           const basePositions = await storage.getOpenPositions(userId);
-
-          const enriched = await Promise.all(
-            basePositions.map(async (position) => {
-              const changePctByTimeframe = {} as Record<SupportedTimeframe, number>;
-              const partialFlags = {} as Record<SupportedTimeframe, boolean>;
-              for (const frame of SUPPORTED_TIMEFRAMES) {
-                changePctByTimeframe[frame] = 0;
-                partialFlags[frame] = false;
-              }
-
-              await Promise.all(
-                SUPPORTED_TIMEFRAMES.map(async (frame) => {
-                  try {
-                    const metric = await getChangePct(position.symbol, frame);
-                    if (Number.isFinite(metric.value)) {
-                      changePctByTimeframe[frame] = metric.value;
-                    }
-                    if (metric.partialData) {
-                      partialFlags[frame] = true;
-                    }
-                  } catch {
-                    changePctByTimeframe[frame] = 0;
-                    partialFlags[frame] = true;
-                  }
-                }),
-              );
-
-              const pnlMetrics = await getPnlByTimeframes(position, SUPPORTED_TIMEFRAMES);
-              const pnlByTimeframe = {} as Record<SupportedTimeframe, number>;
-              for (const frame of SUPPORTED_TIMEFRAMES) {
-                const metric = pnlMetrics[frame];
-                const value = metric?.value;
-                pnlByTimeframe[frame] = Number.isFinite(value) ? (value as number) : 0;
-                if (metric?.partialData) {
-                  partialFlags[frame] = true;
-                }
-              }
-
-              const hasPartial = Object.values(partialFlags).some(Boolean);
-
-              const normalized: OpenPositionResponse = {
-                id: String(position.id),
-                userId: String(position.userId),
-                symbol: position.symbol,
-                side: position.side as 'LONG' | 'SHORT',
-                size: position.size != null ? String(position.size) : '0',
-                entryPrice: position.entryPrice != null ? String(position.entryPrice) : '0',
-                currentPrice: position.currentPrice != null ? String(position.currentPrice) : undefined,
-                pnl: position.pnl != null ? String(position.pnl) : undefined,
-                stopLoss: position.stopLoss != null ? String(position.stopLoss) : undefined,
-                takeProfit: position.takeProfit != null ? String(position.takeProfit) : undefined,
-                trailingStopPercent:
-                  position.trailingStopPercent != null ? Number(position.trailingStopPercent) : undefined,
-                status: position.status ?? '',
-                orderId: position.orderId != null ? String(position.orderId) : undefined,
-                openedAt:
-                  position.openedAt instanceof Date
-                    ? position.openedAt.toISOString()
-                    : position.openedAt != null
-                    ? String(position.openedAt)
-                    : new Date().toISOString(),
-                closedAt:
-                  position.closedAt instanceof Date
-                    ? position.closedAt.toISOString()
-                    : position.closedAt != null
-                    ? String(position.closedAt)
-                    : undefined,
-                changePctByTimeframe,
-                pnlByTimeframe,
-                partialData: hasPartial,
-                partialDataByTimeframe: partialFlags,
-              };
-
-              return normalized;
-            }),
-          );
-
-          return enriched;
+          return basePositions.map((position) => buildOpenPositionResponse(position));
         },
       );
 
@@ -945,6 +990,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const payload = quickTradeSchema.parse(req.body ?? {});
       const request = { ...payload } as any;
+      const amountUsdValue = request.amountUsd != null ? Number(request.amountUsd) : undefined;
 
       if (!request.size && request.amountUsd) {
         const amountUsd = Number(request.amountUsd);
@@ -982,12 +1028,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
       });
 
       const side = parsedPosition.side === "LONG" ? "BUY" : "SELL";
-      const qty = parseFloat(parsedPosition.size);
+      const orderQty = Number(parsedPosition.size ?? 0);
       const order = await broker.placeOrder({
         symbol: parsedPosition.symbol,
         side,
         type: "MARKET",
-        qty,
+        qty: orderQty,
       });
 
       if (!order) {
@@ -1000,29 +1046,49 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const userSettings = await storage.getUserSettings(parsedPosition.userId);
       const defaults = computeDefaultTargets(parsedPosition.side as "LONG" | "SHORT", Number(entryPrice), userSettings);
 
+      const entryPriceNumber = Number(entryPrice);
+      const qtyNumber = Number.isFinite(orderQty) ? orderQty : 0;
+      const qtyStr = Number.isFinite(qtyNumber) ? qtyNumber.toFixed(8) : toDecimalString(0);
+      let sizeUsdNumber = Number.isFinite(amountUsdValue ?? NaN) ? (amountUsdValue as number) : undefined;
+      if (!Number.isFinite(sizeUsdNumber ?? NaN) && Number.isFinite(entryPriceNumber) && qtyNumber > 0) {
+        sizeUsdNumber = entryPriceNumber * qtyNumber;
+      }
+      const sizeUsdStr = Number.isFinite(sizeUsdNumber ?? NaN)
+        ? (sizeUsdNumber as number).toFixed(8)
+        : toDecimalString(0);
+      const stopLossPrice = parsedPosition.stopLoss ?? defaults.stopLoss ?? undefined;
+      const takeProfitPrice = parsedPosition.takeProfit ?? defaults.takeProfit ?? undefined;
+
       const positionToSave: typeof parsedPosition = {
         ...parsedPosition,
         orderId: order.orderId,
         entryPrice,
         currentPrice: entryPrice,
-        stopLoss: parsedPosition.stopLoss ?? defaults.stopLoss ?? undefined,
-        takeProfit: parsedPosition.takeProfit ?? defaults.takeProfit ?? undefined,
+        size: sizeUsdStr,
+        qty: qtyStr,
+        stopLoss: stopLossPrice ?? undefined,
+        takeProfit: takeProfitPrice ?? undefined,
+        slPrice: stopLossPrice ?? undefined,
+        tpPrice: takeProfitPrice ?? undefined,
       };
 
       const result = await storage.createPosition(positionToSave);
 
+      clearCacheKey("positions:open");
+      clearCacheKey(`positions:open:${parsedPosition.userId}`);
+
       console.info(
-        `[trade] opened ${result.symbol} ${result.side} qty=${result.size} entry=${result.entryPrice}`,
+        `[trade] opened ${result.symbol} ${result.side} qty=${result.qty ?? result.size} entry=${result.entryPrice}`,
       );
 
       await telegramService.sendTradeNotification({
         action: "opened",
         symbol: result.symbol,
         side: result.side,
-        size: result.size,
+        size: result.qty ?? result.size,
         price: result.entryPrice,
-        stopLoss: result.stopLoss ?? undefined,
-        takeProfit: result.takeProfit ?? undefined,
+        stopLoss: result.stopLoss ?? result.slPrice ?? undefined,
+        takeProfit: result.takeProfit ?? result.tpPrice ?? undefined,
       });
 
       broadcast({ type: "position_opened", data: result });
@@ -1031,6 +1097,91 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const message = error instanceof Error ? error.message : String(error);
       void telegramService.sendNotification(`❌ Failed to open position: ${message}`);
       respondWithError(res, "POST /api/positions", error, "Failed to create position");
+    }
+  });
+
+  app.patch("/api/positions/:id/risk", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const payload = riskPatchSchema.parse(req.body ?? {});
+      const position = await storage.getPositionById(id);
+      if (!position || position.status !== "OPEN") {
+        return res.status(404).json({ message: "Position not found" });
+      }
+
+      const entryNumeric = parseNumeric(position.entryPrice);
+      if (!Number.isFinite(entryNumeric) || (entryNumeric as number) <= 0) {
+        return res.status(400).json({ message: "Entry price unavailable for risk update" });
+      }
+
+      const parseTargetField = (value: unknown, label: string): { provided: boolean; value: number | null } => {
+        if (value === undefined) {
+          return { provided: false, value: null };
+        }
+        if (value === null) {
+          return { provided: true, value: null };
+        }
+        if (typeof value === "string" && value.trim().length === 0) {
+          return { provided: true, value: null };
+        }
+        const numeric = parseNumeric(value);
+        if (!Number.isFinite(numeric) || (numeric as number) <= 0) {
+          throw new Error(`${label} must be greater than zero`);
+        }
+        return { provided: true, value: numeric as number };
+      };
+
+      let tpInput;
+      let slInput;
+      try {
+        tpInput = parseTargetField(payload.tpPrice, "TP price");
+        slInput = parseTargetField(payload.slPrice, "SL price");
+      } catch (parseError) {
+        return res.status(400).json({ message: (parseError as Error).message });
+      }
+
+      if (!tpInput.provided && !slInput.provided) {
+        return res.json(buildOpenPositionResponse(position));
+      }
+
+      const entryPrice = entryNumeric as number;
+      const side = String(position.side ?? "").toUpperCase();
+
+      if (tpInput.value != null) {
+        if (side === "LONG" && tpInput.value <= entryPrice) {
+          return res.status(400).json({ message: "Take profit must be above entry price for LONG positions" });
+        }
+        if (side === "SHORT" && tpInput.value >= entryPrice) {
+          return res.status(400).json({ message: "Take profit must be below entry price for SHORT positions" });
+        }
+      }
+
+      if (slInput.value != null) {
+        if (side === "LONG" && slInput.value >= entryPrice) {
+          return res.status(400).json({ message: "Stop loss must be below entry price for LONG positions" });
+        }
+        if (side === "SHORT" && slInput.value <= entryPrice) {
+          return res.status(400).json({ message: "Stop loss must be above entry price for SHORT positions" });
+        }
+      }
+
+      const updates: Partial<typeof positions.$inferInsert> = {};
+      if (tpInput.provided) {
+        updates.tpPrice = tpInput.value != null ? toDecimalString(tpInput.value) : null;
+        updates.takeProfit = updates.tpPrice;
+      }
+      if (slInput.provided) {
+        updates.slPrice = slInput.value != null ? toDecimalString(slInput.value) : null;
+        updates.stopLoss = updates.slPrice;
+      }
+
+      const updated = await storage.updatePosition(id, updates);
+      clearCacheKey("positions:open");
+      clearCacheKey(`positions:open:${position.userId}`);
+      broadcast({ type: "position_updated", data: updated });
+      res.json(buildOpenPositionResponse(updated));
+    } catch (error) {
+      respondWithError(res, "PATCH /api/positions/:id/risk", error, "Failed to update risk targets");
     }
   });
 
@@ -1221,8 +1372,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
         for (const position of openPositionRows) {
           const entry = parseNumeric(position.entryPrice) ?? 0;
-          const size = parseNumeric(position.size) ?? 0;
-          if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(size) || size <= 0) {
+          const qty = resolveQty(position);
+          if (!Number.isFinite(entry) || entry <= 0 || qty <= 0) {
             continue;
           }
 
@@ -1234,9 +1385,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
           const side = String(position.side ?? "").toUpperCase();
           let positionPnl = 0;
           if (side === "LONG") {
-            positionPnl = (price - entry) * size;
+            positionPnl = (price - entry) * qty;
           } else if (side === "SHORT") {
-            positionPnl = (entry - price) * size;
+            positionPnl = (entry - price) * qty;
           }
 
           if (Number.isFinite(positionPnl)) {

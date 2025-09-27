@@ -68,6 +68,20 @@ function buildMetric(value: number, partialData: boolean): MetricValue {
   return { value: numeric, partialData };
 }
 
+function resolveQty(position: Position): number {
+  const qty = safeNumber(position.qty);
+  if (qty > 0) {
+    return qty;
+  }
+  const sizeUsd = safeNumber(position.size);
+  const entryPrice = safeNumber(position.entryPrice);
+  if (sizeUsd > 0 && entryPrice > 0) {
+    const computed = sizeUsd / entryPrice;
+    return Number.isFinite(computed) ? computed : 0;
+  }
+  return 0;
+}
+
 async function fetchLastPriceFromDb(symbol: string): Promise<number> {
   try {
     const query =
@@ -305,7 +319,7 @@ export async function getPnlForPosition(position: Position, timeframe: string): 
     return buildMetric(0, true);
   }
 
-  const qty = safeNumber(position.size);
+  const qty = resolveQty(position);
   if (!Number.isFinite(qty) || qty <= 0) {
     return buildMetric(0, true);
   }

@@ -100,15 +100,19 @@ export const positions = pgTable("positions", {
   symbol: varchar("symbol", { length: 20 }).notNull(),
   side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
   size: decimal("size", { precision: 18, scale: 8 }).notNull(),
+  qty: decimal("qty", { precision: 18, scale: 8 }),
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
   currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
   pnl: decimal("pnl", { precision: 18, scale: 8 }).default("0"),
   stopLoss: decimal("stop_loss", { precision: 18, scale: 8 }),
   takeProfit: decimal("take_profit", { precision: 18, scale: 8 }),
+  tpPrice: decimal("tp_price", { precision: 18, scale: 8 }),
+  slPrice: decimal("sl_price", { precision: 18, scale: 8 }),
   trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
   status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
   orderId: varchar("order_id", { length: 50 }),
   openedAt: timestamp("opened_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
   closedAt: timestamp("closed_at"),
 });
 
@@ -217,6 +221,7 @@ export const insertPositionSchema = createInsertSchema(positions).omit({
   id: true,
   openedAt: true,
   closedAt: true,
+  updatedAt: true,
 });
 
 export const insertSignalSchema = createInsertSchema(signals).omit({

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,23 +11,28 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { X, Edit } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import { useClosedPositions, usePositions } from "@/hooks/useTradingData";
-import { PriceUpdate } from "@/types/trading";
+import { Position, PriceUpdate } from "@/types/trading";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { TIMEFRAMES } from "@/constants/timeframes";
-import type { Timeframe } from "@/types/trading";
 import { formatPct, formatUsd, trendClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 interface PositionsProps {
   priceData: Map<string, PriceUpdate>;
@@ -38,12 +43,14 @@ export default function Positions({ priceData }: PositionsProps) {
   const { data: closedPositions, isLoading: isLoadingClosed } = useClosedPositions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [selectedTimeframes, setSelectedTimeframes] = useState<Record<string, Timeframe>>({});
-  const defaultTimeframe: Timeframe = "1d";
+  const [isRiskDialogOpen, setIsRiskDialogOpen] = useState(false);
+  const [editingPosition, setEditingPosition] = useState<Position | null>(null);
+  const [tpInput, setTpInput] = useState("");
+  const [slInput, setSlInput] = useState("");
 
   const closePositionMutation = useMutation({
     mutationFn: async (positionId: string) => {
-      await apiRequest('POST', `/api/trades/close`, { positionId });
+      await apiRequest("POST", `/api/trades/close`, { positionId });
     },
     onSuccess: () => {
       toast({
@@ -51,51 +58,122 @@ export default function Positions({ priceData }: PositionsProps) {
         description: "Position closed successfully",
         variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/positions/closed'] });
+      queryClient.invalidateQueries({ queryKey: ["/api/positions/open"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/positions/closed"] });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Failed to close position";
       toast({
         title: "Error",
-        description: error.message || "Failed to close position",
+        description: message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateRiskMutation = useMutation({
+    mutationFn: async ({ id, tpPrice, slPrice }: { id: string; tpPrice: number | null; slPrice: number | null }) => {
+      await apiRequest("PATCH", `/api/positions/${id}/risk`, { tpPrice, slPrice });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Risk targets updated",
+        variant: "default",
+      });
+      setIsRiskDialogOpen(false);
+      setEditingPosition(null);
+      setTpInput("");
+      setSlInput("");
+      queryClient.invalidateQueries({ queryKey: ["/api/positions/open"] });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Failed to update risk targets";
+      toast({
+        title: "Error",
+        description: message,
         variant: "destructive",
       });
     },
   });
 
   const handleClosePosition = (positionId: string) => {
-    if (window.confirm('Are you sure you want to close this position?')) {
+    if (window.confirm("Are you sure you want to close this position?")) {
       closePositionMutation.mutate(positionId);
     }
   };
 
-  const handleTimeframeChange = (positionId: string, value: string) => {
-    if ((TIMEFRAMES as readonly string[]).includes(value)) {
-      setSelectedTimeframes((prev) => ({
-        ...prev,
-        [positionId]: value as Timeframe,
-      }));
-    }
+  const openRiskDialog = (position: Position) => {
+    setEditingPosition(position);
+    setTpInput(position.tpPrice != null ? String(position.tpPrice) : "");
+    setSlInput(position.slPrice != null ? String(position.slPrice) : "");
+    setIsRiskDialogOpen(true);
   };
 
-  const calculatePnL = (position: any, currentPrice?: string) => {
-    if (!currentPrice) {
-      const stored = Number(position.pnl ?? 0);
-      return Number.isFinite(stored) ? stored : 0;
+  const closeRiskDialog = () => {
+    setIsRiskDialogOpen(false);
+    setEditingPosition(null);
+    setTpInput("");
+    setSlInput("");
+  };
+
+  const handleRiskSave = () => {
+    if (!editingPosition) {
+      return;
+    }
+    const parseField = (value: string): number | null | undefined => {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {
+        return null;
+      }
+      const numeric = Number(trimmed);
+      if (!Number.isFinite(numeric)) {
+        toast({
+          title: "Error",
+          description: "Enter a valid numeric price",
+          variant: "destructive",
+        });
+        return undefined;
+      }
+      return numeric;
+    };
+
+    const tpValue = parseField(tpInput);
+    if (tpValue === undefined) {
+      return;
+    }
+    const slValue = parseField(slInput);
+    if (slValue === undefined) {
+      return;
     }
 
-    const entryPrice = parseFloat(position.entryPrice);
-    const price = parseFloat(currentPrice);
-    const size = parseFloat(position.size);
+    updateRiskMutation.mutate({
+      id: editingPosition.id,
+      tpPrice: tpValue,
+      slPrice: slValue,
+    });
+  };
 
-    if (!Number.isFinite(entryPrice) || !Number.isFinite(price) || !Number.isFinite(size)) {
+  const calculatePnL = (position: Position, currentPrice?: string) => {
+    const entryPrice = Number(position.entryPrice ?? 0);
+    const price = Number(currentPrice ?? position.currentPrice ?? 0);
+    let qty = Number(position.qty ?? 0);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      const sizeUsd = Number(position.sizeUsd ?? 0);
+      if (Number.isFinite(sizeUsd) && sizeUsd > 0 && Number.isFinite(entryPrice) && entryPrice > 0) {
+        qty = sizeUsd / entryPrice;
+      }
+    }
+
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(price) || qty <= 0) {
       return 0;
     }
 
-    if (position.side === 'LONG') {
-      return (price - entryPrice) * size;
+    if (position.side === "LONG") {
+      return (price - entryPrice) * qty;
     }
-    return (entryPrice - price) * size;
+    return (entryPrice - price) * qty;
   };
 
   const formatPnL = (pnl: number) => {
@@ -119,8 +197,17 @@ export default function Positions({ priceData }: PositionsProps) {
     return `$${formatUsd(numeric)}`;
   };
 
-  const formatPrice = (value: string | number | undefined, digits: number = 4) => {
+  const formatQty = (value: string | number | undefined) => {
     const numeric = Number(value ?? 0);
+    if (!Number.isFinite(numeric)) return '0.00000000';
+    return numeric.toFixed(8);
+  };
+
+  const formatPrice = (value: string | number | null | undefined, digits: number = 4) => {
+    if (value === null || value === undefined || value === "") {
+      return "—";
+    }
+    const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '—';
     return `$${numeric.toFixed(digits)}`;
   };
@@ -190,11 +277,12 @@ export default function Positions({ priceData }: PositionsProps) {
                     <TableRow>
                       <TableHead>Symbol</TableHead>
                       <TableHead>Side</TableHead>
-                      <TableHead>Size</TableHead>
+                      <TableHead>Size (USD)</TableHead>
+                      <TableHead>Amount (qty)</TableHead>
                       <TableHead>Entry</TableHead>
                       <TableHead>Current Price</TableHead>
-                      <TableHead>P&amp;L</TableHead>
-                      <TableHead className="text-right">TF % / P&amp;L</TableHead>
+                      <TableHead>P&amp;L (USD)</TableHead>
+                      <TableHead>TP/SL</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -202,12 +290,12 @@ export default function Positions({ priceData }: PositionsProps) {
                     {positions.map((position) => {
                       const priceInfo = priceData.get(position.symbol);
                       const currentPrice = priceInfo?.price ?? position.currentPrice ?? position.entryPrice;
-                      const pnl = calculatePnL(position, priceInfo?.price);
+                      const pnl = calculatePnL(position, priceInfo?.price ?? currentPrice);
                       const pnlColor = trendClass(pnl);
-                      const timeframe = selectedTimeframes[position.id] ?? defaultTimeframe;
-                      const changeValue = Number(position.changePctByTimeframe?.[timeframe] ?? 0);
-                      const pnlValue = Number(position.pnlByTimeframe?.[timeframe] ?? 0);
-                      const timeframeClass = trendClass(changeValue);
+                      const tpDisplay = formatPrice(position.tpPrice, 2);
+                      const slDisplay = formatPrice(position.slPrice, 2);
+                      const hasTp = tpDisplay !== '—';
+                      const hasSl = slDisplay !== '—';
 
                       return (
                         <TableRow key={position.id}>
@@ -222,7 +310,8 @@ export default function Positions({ priceData }: PositionsProps) {
                               {position.side}
                             </Badge>
                           </TableCell>
-                          <TableCell>{position.size}</TableCell>
+                          <TableCell className="font-mono">{formatCurrency(position.sizeUsd)}</TableCell>
+                          <TableCell className="font-mono">{formatQty(position.qty)}</TableCell>
                           <TableCell className="font-mono">{formatPrice(position.entryPrice)}</TableCell>
                           <TableCell className="font-mono" data-testid={`position-price-${position.id}`}>
                             {formatPrice(currentPrice)}
@@ -233,47 +322,36 @@ export default function Positions({ priceData }: PositionsProps) {
                           >
                             {formatPnL(pnl)}
                           </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex flex-col items-end gap-1">
-                              <Select
-                                value={timeframe}
-                                onValueChange={(value) => handleTimeframeChange(position.id, value)}
-                              >
-                                <SelectTrigger className="h-8 w-[88px] text-xs">
-                                  <SelectValue placeholder="TF" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {TIMEFRAMES.map((tf) => (
-                                    <SelectItem key={tf} value={tf} className="text-xs">
-                                      {tf}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <span className={cn('font-mono text-sm', timeframeClass)}>
-                                {`${formatPct(changeValue)} | ${formatUsd(pnlValue)} $`}
-                              </span>
-                            </div>
-                          </TableCell>
                           <TableCell>
-                            <div className="flex items-center justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                data-testid={`button-edit-${position.id}`}
-                              >
-                                <Edit className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => handleClosePosition(position.id)}
-                                disabled={closePositionMutation.isPending}
-                                data-testid={`button-close-${position.id}`}
-                              >
-                                <X className="w-4 h-4" />
-                              </Button>
-                            </div>
+                            {hasTp || hasSl ? (
+                              <div className="flex flex-col gap-1">
+                                {hasTp && <Badge variant="outline">TP: {tpDisplay}</Badge>}
+                                {hasSl && <Badge variant="outline">SL: {slDisplay}</Badge>}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openRiskDialog(position)}>
+                                  Edit TP/SL
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleClosePosition(position.id)}
+                                  disabled={closePositionMutation.isPending}
+                                  className="text-destructive"
+                                >
+                                  Close position
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       );
@@ -353,6 +431,58 @@ export default function Positions({ priceData }: PositionsProps) {
           )}
         </TabsContent>
       </Tabs>
+      <Dialog
+        open={isRiskDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeRiskDialog();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit TP/SL</DialogTitle>
+            {editingPosition ? (
+              <p className="text-sm text-muted-foreground">
+                {editingPosition.symbol} · {editingPosition.side}
+              </p>
+            ) : null}
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Update take profit and stop loss prices. Leave a field empty to remove the target.
+            </p>
+            <div className="grid gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">TP Price</label>
+                <Input
+                  value={tpInput}
+                  onChange={(event) => setTpInput(event.target.value)}
+                  placeholder="e.g. 2500"
+                  disabled={updateRiskMutation.isPending}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">SL Price</label>
+                <Input
+                  value={slInput}
+                  onChange={(event) => setSlInput(event.target.value)}
+                  placeholder="e.g. 2200"
+                  disabled={updateRiskMutation.isPending}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRiskDialog} disabled={updateRiskMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={handleRiskSave} disabled={updateRiskMutation.isPending || !editingPosition}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
