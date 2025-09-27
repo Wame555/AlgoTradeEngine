@@ -1,9 +1,6 @@
 import type { Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
-
 import { cached, MICRO_CACHE_TTL_MS } from "../cache/apiCache";
-import { db } from "../db";
-import { positions } from "@shared/schema";
+import { storage } from "../storage";
 import {
   SUPPORTED_TIMEFRAMES,
   type StatsChangeResponse,
@@ -76,10 +73,10 @@ export async function change(req: Request, res: Response): Promise<void> {
           partialData = true;
         }
 
-        const openPositions = await db
-          .select()
-          .from(positions)
-          .where(and(eq(positions.symbol, symbol), eq(positions.status, "OPEN")));
+        const allOpenPositions = await storage.getAllOpenPositions();
+        const openPositions = allOpenPositions.filter(
+          (position) => normalizeSymbol(position.symbol) === symbol && position.status === "OPEN",
+        );
 
         let pnlTotal = 0;
         for (const position of openPositions) {

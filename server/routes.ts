@@ -509,16 +509,27 @@ export function registerRoutes(app: Express, deps: Deps): void {
   };
 
   const resolveQty = (position: Position): number => {
-    const storedQty = parseNumeric(position.qty);
-    if (typeof storedQty === "number" && storedQty > 0) {
-      return Number(storedQty.toFixed(8));
-    }
-    const sizeUsd = parseNumeric(position.size);
+    const rawQty = parseNumeric(position.qty);
+    const sizeValue = parseNumeric(position.size);
     const entry = parseNumeric(position.entryPrice);
-    if (typeof sizeUsd === "number" && typeof entry === "number" && entry > 0) {
-      const computed = sizeUsd / entry;
+
+    if (typeof rawQty === "number" && rawQty > 0) {
+      const qtyMatchesSize =
+        typeof sizeValue === "number" && sizeValue > 0 && Math.abs(rawQty - sizeValue) <= 1e-8;
+      if (!qtyMatchesSize) {
+        return Number(rawQty.toFixed(8));
+      }
+    }
+
+    if (typeof sizeValue === "number" && typeof entry === "number" && entry > 0) {
+      const computed = sizeValue / entry;
       return Number.isFinite(computed) ? Number(computed.toFixed(8)) : 0;
     }
+
+    if (typeof rawQty === "number" && rawQty > 0) {
+      return Number(rawQty.toFixed(8));
+    }
+
     return 0;
   };
 
@@ -1292,7 +1303,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const [closedRows, accountRows, openPositionRows] = await Promise.all([
         db.select().from(closedPositions),
         db.select().from(paperAccounts).limit(1),
-        db.select().from(positions).where(eq(positions.status, "OPEN")),
+        storage.getAllOpenPositions(),
       ]);
 
       const computeClosedPnl = (row: (typeof closedRows)[number]) => {
