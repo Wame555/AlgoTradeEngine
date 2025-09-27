@@ -16,6 +16,7 @@ import {
 import { getLastPrice } from "./PriceFeed";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { updateAccountSnapshot } from "../state/accountSnapshot";
 
 export class PaperBroker implements Broker {
     private async accountRow() {
@@ -106,6 +107,7 @@ export class PaperBroker implements Broker {
             .update(paperAccounts)
             .set({ balance: newBalance.toString() })
             .where(eq(paperAccounts.id, a.id));
+        updateAccountSnapshot({ totalBalance: newBalance });
 
         // order + trade ments
         const [ord] = await db

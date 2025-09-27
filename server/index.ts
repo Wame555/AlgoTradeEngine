@@ -36,6 +36,7 @@ import {
     markWsStatus,
     resetHealthState,
 } from "./state/systemHealth";
+import { loadAccountSnapshotFromDisk } from "./state/accountSnapshot";
 
 configureLogging();
 
@@ -156,6 +157,14 @@ wss.on("connection", (ws) => {
 // --- Indítási folyamat ---
 (async () => {
     const PORT = Number(process.env.PORT || 5000);
+
+    try {
+        await loadAccountSnapshotFromDisk();
+    } catch (snapshotError) {
+        console.warn(
+            `[startup] failed to load account snapshot: ${(snapshotError as Error).message ?? snapshotError}`,
+        );
+    }
 
     try {
         await ensureSchema(pool);

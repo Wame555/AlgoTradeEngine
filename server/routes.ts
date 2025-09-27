@@ -28,6 +28,7 @@ import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
 import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
 import { startRiskWatcher } from "./services/riskWatcher";
+import { getAccountSnapshot, updateAccountSnapshot } from "./state/accountSnapshot";
 import { logError } from "./utils/logger";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
@@ -202,6 +203,25 @@ async function ensureDefaultUser() {
 
   if (!settings) {
     throw new Error("Failed to ensure default user settings");
+  }
+
+  const snapshot = getAccountSnapshot();
+  if (snapshot && Number.isFinite(snapshot.totalBalance)) {
+    const storedBalance = Number(settings.totalBalance ?? 0);
+    const snapshotBalance = snapshot.totalBalance;
+    const shouldSync = !Number.isFinite(storedBalance) || Math.abs(storedBalance - snapshotBalance) >= 0.01;
+    if (shouldSync) {
+      try {
+        settings = await storage.upsertUserSettings({
+          userId: user.id,
+          totalBalance: snapshotBalance.toFixed(2),
+        });
+      } catch (error) {
+        console.warn(
+          `[session] failed to sync account snapshot: ${(error as Error).message ?? error}`,
+        );
+      }
+    }
   }
 
   try {
@@ -651,12 +671,57 @@ export function registerRoutes(app: Express, deps: Deps): void {
     return { updated, closedRecord, pnlUsd: netPnl, exitPrice: exitPriceStr, feeUsd: feeStr, qty };
   };
 
-  const formatOptionalPrice = (raw: unknown): string | null => {
-    const numeric = parseNumeric(raw);
-    if (typeof numeric === "number" && numeric > 0) {
-      return toDecimalString(numeric);
+  const resolveTargetPrice = (
+    candidate: unknown,
+    fallback: unknown,
+    targetType: "tp" | "sl",
+    side: "LONG" | "SHORT",
+    entryPrice: number,
+  ): string | null => {
+    const candidateNumeric = parseNumeric(candidate);
+    const fallbackNumeric = parseNumeric(fallback);
+
+    const isPositive = (value: number | undefined): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value > 0;
+
+    const respectsDirection = (value: number): boolean => {
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+        return true;
+      }
+      if (targetType === "tp") {
+        return side === "LONG" ? value > entryPrice : value < entryPrice;
+      }
+      return side === "LONG" ? value < entryPrice : value > entryPrice;
+    };
+
+    const candidateValid = isPositive(candidateNumeric) ? candidateNumeric : undefined;
+    const fallbackValid = isPositive(fallbackNumeric) ? fallbackNumeric : undefined;
+
+    const directionalCandidate =
+      candidateValid !== undefined && respectsDirection(candidateValid)
+        ? candidateValid
+        : undefined;
+    const directionalFallback =
+      fallbackValid !== undefined && respectsDirection(fallbackValid)
+        ? fallbackValid
+        : undefined;
+
+    const chooseClosest = (first?: number, second?: number): number | undefined => {
+      if (first != null && second != null) {
+        const firstDiff = Math.abs(first - entryPrice);
+        const secondDiff = Math.abs(second - entryPrice);
+        return firstDiff <= secondDiff ? first : second;
+      }
+      return first ?? second;
+    };
+
+    const directionalChoice = chooseClosest(directionalCandidate, directionalFallback);
+    if (directionalChoice != null) {
+      return toDecimalString(directionalChoice);
     }
-    return null;
+
+    const fallbackChoice = chooseClosest(candidateValid, fallbackValid);
+    return fallbackChoice != null ? toDecimalString(fallbackChoice) : null;
   };
 
   const buildOpenPositionResponse = (position: Position): OpenPositionResponse => {
@@ -673,8 +738,22 @@ export function registerRoutes(app: Express, deps: Deps): void {
         ? lastPrice
         : storedCurrent ?? entryPrice;
     const pnlUsd = qty > 0 ? computePnlForPosition(position, marketPrice) : 0;
-    const tpPrice = formatOptionalPrice(position.tpPrice ?? position.takeProfit);
-    const slPrice = formatOptionalPrice(position.slPrice ?? position.stopLoss);
+    const rawSide = String(position.side ?? "").toUpperCase();
+    const normalizedSide: "LONG" | "SHORT" = rawSide === "SHORT" ? "SHORT" : "LONG";
+    const tpPrice = resolveTargetPrice(
+      position.tpPrice,
+      position.takeProfit,
+      "tp",
+      normalizedSide,
+      entryPrice,
+    );
+    const slPrice = resolveTargetPrice(
+      position.slPrice,
+      position.stopLoss,
+      "sl",
+      normalizedSide,
+      entryPrice,
+    );
     const currentPriceStr = Number.isFinite(marketPrice) ? toDecimalString(marketPrice) : undefined;
     const openedAt =
       position.openedAt instanceof Date
@@ -918,7 +997,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const { settings } = await ensureDefaultUser();
       const totalBalanceValue = Number(settings.totalBalance ?? 0);
-      const totalBalance = Number.isFinite(totalBalanceValue) ? totalBalanceValue : 0;
+      let totalBalance = Number.isFinite(totalBalanceValue) ? totalBalanceValue : 0;
+      const snapshot = getAccountSnapshot();
+      if (snapshot && Number.isFinite(snapshot.totalBalance)) {
+        totalBalance = snapshot.totalBalance;
+      }
       res.json({ totalBalance });
     } catch (error) {
       respondWithError(res, "GET /api/settings/account", error, "Failed to fetch account settings");
@@ -939,6 +1022,13 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
       if (settings.telegramBotToken && settings.telegramChatId) {
         telegramService.updateCredentials(settings.telegramBotToken, settings.telegramChatId);
+      }
+
+      if (settings.totalBalance != null) {
+        const numeric = Number(settings.totalBalance);
+        if (Number.isFinite(numeric)) {
+          updateAccountSnapshot({ totalBalance: numeric });
+        }
       }
 
       res.json(result);
@@ -997,7 +1087,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const result = await storage.upsertUserSettings(base);
       const responseBalance = Number(result.totalBalance ?? base.totalBalance ?? 0);
-      res.json({ totalBalance: Number.isFinite(responseBalance) ? responseBalance : 0 });
+      const normalizedBalance = Number.isFinite(responseBalance) ? responseBalance : 0;
+      updateAccountSnapshot({ totalBalance: normalizedBalance });
+      res.json({ totalBalance: normalizedBalance });
     } catch (error) {
       respondWithError(res, "PATCH /api/settings/account", error, "Failed to update account settings");
     }
@@ -1467,6 +1559,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
         openPnL,
         totalBalance: balance,
       };
+
+      updateAccountSnapshot({ totalBalance: balance, equity, openPnL });
 
       res.json(payload);
     } catch (error) {
