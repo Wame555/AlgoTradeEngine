@@ -34,6 +34,7 @@ import {
 import { useUserSettings } from "@/hooks/useTradingData";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { formatUsd } from "@/lib/format";
 import { insertUserSettingsSchema } from "@shared/schema";
 import { Save, Key, Shield, DollarSign, TrendingUp } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
@@ -56,6 +57,16 @@ export default function Settings() {
 
   const { data: accountBalanceData, isLoading: isLoadingAccountBalance } = useQuery<{ totalBalance: number }>({
     queryKey: ['/api/settings/account'],
+    queryFn: async () => {
+      const response = await fetch('/api/settings/account', {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || 'Failed to load account balance');
+      }
+      return (await response.json()) as { totalBalance: number };
+    },
     staleTime: 60 * 1000,
     enabled: Boolean(userId),
   });
