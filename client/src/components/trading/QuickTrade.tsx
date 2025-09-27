@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -15,8 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
-import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
-import { PriceUpdate, TradingPair } from "@/types/trading";
+import type { PriceUpdate } from "@/types/trading";
 
 const tradeFormSchema = z
   .object({
@@ -83,7 +82,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       mode: 'QTY',
       size: '0.01',
       amountUsd: '100',
-      leverage: settings?.defaultLeverage ?? 1,
+      leverage: Number(settings?.defaultLeverage ?? 1),
       stopLoss: '',
       takeProfit: '',
     },
@@ -100,17 +99,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   useEffect(() => {
     if (settings?.defaultLeverage) {
-      form.setValue('leverage', settings.defaultLeverage);
+      form.setValue('leverage', Number(settings.defaultLeverage));
     }
   }, [settings, form]);
-
-  const resolveFilters = (pair: TradingPair | undefined) => {
-    return {
-      stepSize: pair?.stepSize ? Number(pair.stepSize) : undefined,
-      minQty: pair?.minQty ? Number(pair.minQty) : undefined,
-      minNotional: pair?.minNotional ? Number(pair.minNotional) : undefined,
-    };
-  };
 
   const getLastPrice = (symbol: string): number | null => {
     const priceEntry = priceData.get(symbol);
@@ -121,115 +112,31 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     return Number.isFinite(price) ? price : null;
   };
 
-  const createPositionMutation = useMutation({
-    mutationFn: async (data: TradeForm) => {
-      if (!userId) {
-        throw new Error('Missing user context');
-      }
-      if (!data.symbol) {
-        throw new Error('Select a symbol to trade');
-      }
-
-      let sizeToUse = data.mode === 'QTY' ? data.size : undefined;
-      let amountToUse = data.mode === 'USDT' ? data.amountUsd : undefined;
-
-      if (data.mode === 'USDT') {
-        const price = getLastPrice(data.symbol);
-        if (!price) {
-          throw new Error('Live price is unavailable for the selected symbol');
-        }
-        const pairForSymbol = tradingPairs?.find((pair) => pair.symbol === data.symbol);
-        const filters = resolveFilters(pairForSymbol);
-        try {
-          const quantityResult = calculateQuantityFromUsd(Number(amountToUse), price, filters);
-          sizeToUse = quantityResult.quantity.toFixed(8);
-        } catch (error) {
-          if (error instanceof QuantityValidationError) {
-            throw new Error(error.message);
-          }
-          throw new Error('Failed to calculate order quantity');
-        }
-      }
-
-      if (!sizeToUse) {
-        throw new Error('Unable to determine position size');
-      }
-
-      const payload: {
-        mode: 'QTY' | 'USDT';
-        symbol: string;
-        side: 'LONG' | 'SHORT';
-        qty?: number;
-        usdtAmount?: number;
-        tp_price?: number;
-        sl_price?: number;
-        leverage?: number;
-      } = {
-        mode: data.mode,
-        symbol: data.symbol,
-        side: data.side,
-      };
-
-      if (data.mode === 'QTY') {
-        payload.qty = Number(sizeToUse);
-      } else {
-        payload.usdtAmount = Number(amountToUse);
-      }
-
-      const tpNumeric = data.takeProfit ? Number(data.takeProfit) : null;
-      if (tpNumeric != null && Number.isFinite(tpNumeric) && tpNumeric > 0) {
-        payload.tp_price = tpNumeric;
-      }
-
-      const slNumeric = data.stopLoss ? Number(data.stopLoss) : null;
-      if (slNumeric != null && Number.isFinite(slNumeric) && slNumeric > 0) {
-        payload.sl_price = slNumeric;
-      }
-
-      if (Number.isFinite(data.leverage) && data.leverage > 0) {
-        payload.leverage = data.leverage;
-      }
-
-      await apiRequest('POST', '/api/trade/quick', payload);
+  const mutation = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const response = await apiRequest('POST', '/api/trade/quick', payload);
+      return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setHasEquityError(false);
       toast({
         title: "Success",
         description: "Position opened successfully",
-        variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ["positions:open"] });
-      queryClient.invalidateQueries({ queryKey: ["summary"] });
-      if (userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
-      }
-      form.reset({
-        symbol: tradingPairs?.[0]?.symbol ?? '',
-        side: 'LONG',
-        mode: 'QTY',
-        size: '0.01',
-        amountUsd: '100',
-        leverage: settings?.defaultLeverage ?? 1,
-        stopLoss: '',
-        takeProfit: '',
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["positions:open"] }),
+        queryClient.invalidateQueries({ queryKey: ["summary"] }),
+      ]);
     },
     onError: (error: any) => {
       const message = typeof error?.message === 'string' ? error.message : 'Failed to open position';
-      let parsed: { code?: string; message?: string } | null = null;
-      const colonIndex = message.indexOf(':');
-      if (colonIndex !== -1) {
-        const maybeJson = message.slice(colonIndex + 1).trim();
-        if (maybeJson.startsWith('{')) {
-          try {
-            parsed = JSON.parse(maybeJson);
-          } catch {
-            parsed = null;
-          }
+      const parsed = (() => {
+        try {
+          return JSON.parse(message.split(': ').slice(1).join(': '));
+        } catch {
+          return null;
         }
-      }
+      })();
 
       if (parsed?.code === 'INSUFFICIENT_EQUITY') {
         setHasEquityError(true);
@@ -251,87 +158,29 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   const onSubmit = (data: TradeForm) => {
     if (!userId) {
-      toast({
-        title: "Missing user",
-        description: "User session is not ready yet.",
-        variant: "destructive",
-      });
+      toast({ title: "Missing user", description: "User session is not ready yet.", variant: "destructive" });
       return;
     }
 
-    const symbol = data.symbol?.trim().toUpperCase();
+    const symbol = data.symbol.trim().toUpperCase();
     if (!symbol) {
-      toast({
-        title: "Select symbol",
-        description: "Choose a trading pair before placing an order.",
-        variant: "destructive",
-      });
+      toast({ title: "Select symbol", description: "Choose a trading pair before placing an order.", variant: "destructive" });
       return;
     }
 
-    if (!data.side) {
-      toast({
-        title: "Select side",
-        description: "Choose LONG or SHORT before placing an order.",
-        variant: "destructive",
-      });
+    const price = getLastPrice(symbol);
+    if (!price) {
+      toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
       return;
     }
 
-    const mode = data.mode;
-    let qtyValue: number | null = null;
-    let usdtValue: number | null = null;
-
-    if (mode === 'QTY') {
-      qtyValue = Number(data.size);
-      if (!Number.isFinite(qtyValue) || qtyValue <= 0) {
-        toast({
-          title: "Invalid size",
-          description: "Enter a valid position size.",
-          variant: "destructive",
-        });
-        return;
-      }
+    const payload: Record<string, unknown> = { symbol, side: data.side, mode: data.mode };
+    if (data.mode === 'QTY') {
+      payload.qty = Number(data.size);
     } else {
-      usdtValue = Number(data.amountUsd);
-      if (!Number.isFinite(usdtValue) || usdtValue <= 0) {
-        toast({
-          title: "Invalid amount",
-          description: "Enter a valid USDT amount.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
-    let requiredUsd = 0;
-    if (mode === 'USDT') {
-      requiredUsd = usdtValue ?? 0;
-    } else {
-      const lastPrice = getLastPrice(symbol);
-      if (!lastPrice || !Number.isFinite(lastPrice) || lastPrice <= 0) {
-        toast({
-          title: "Missing price",
-          description: "Live price is unavailable for the selected symbol.",
-          variant: "destructive",
-        });
-        return;
-      }
-      requiredUsd = (qtyValue ?? 0) * lastPrice;
-    }
-
-    if (!Number.isFinite(requiredUsd) || requiredUsd <= 0) {
-      toast({
-        title: "Invalid order",
-        description: "Unable to determine order notional.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (mode === 'USDT') {
-      const equity = statsSummary?.equity;
-      if (Number.isFinite(equity) && usdtValue != null && usdtValue > (equity as number)) {
+      payload.usdtAmount = Number(data.amountUsd);
+      const equity = Number(statsSummary?.equity ?? 0);
+      if (Number.isFinite(equity) && Number(payload.usdtAmount) > equity) {
         setHasEquityError(true);
         toast({
           title: 'Nincs elegendő egyenleg',
@@ -342,19 +191,27 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       }
     }
 
-    setHasEquityError(false);
+    const tp = Number(data.takeProfit);
+    if (Number.isFinite(tp) && tp > 0) {
+      payload.tp_price = tp;
+    }
 
-    const payload: TradeForm = {
-      ...data,
-      symbol,
-      size: mode === 'QTY' && qtyValue != null ? qtyValue.toString() : data.size,
-      amountUsd: mode === 'USDT' && usdtValue != null ? usdtValue.toString() : data.amountUsd,
-    };
+    const sl = Number(data.stopLoss);
+    if (Number.isFinite(sl) && sl > 0) {
+      payload.sl_price = sl;
+    }
 
-    createPositionMutation.mutate(payload);
+    if (Number.isFinite(data.leverage) && data.leverage > 0) {
+      payload.leverage = data.leverage;
+    }
+
+    mutation.mutate(payload);
   };
 
   const handlePlaceOrder = () => {
+    if (mutation.isPending) {
+      return;
+    }
     void form.handleSubmit(onSubmit)();
   };
 
@@ -362,17 +219,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     form.setValue('side', side);
   };
 
-  const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (createPositionMutation.isPending) {
-      return;
-    }
-    handlePlaceOrder();
-  };
-
   const availablePairs = tradingPairs ?? [];
   const tradingDisabled = availablePairs.length === 0 || !userId;
-  const isPending = createPositionMutation.isPending;
+  const isPending = mutation.isPending;
   const isFormDisabled = tradingDisabled || isPending;
   const mode = form.watch('mode');
   const watchedQty = form.watch('size');
@@ -405,7 +254,13 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={handleFormSubmit} className="space-y-4">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              handlePlaceOrder();
+            }}
+            className="space-y-4"
+          >
             <FormField
               control={form.control}
               name="symbol"

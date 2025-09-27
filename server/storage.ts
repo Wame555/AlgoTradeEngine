@@ -13,9 +13,7 @@ import {
   closedPositions,
   type TradingPair,
   type User,
-  type InsertUser,
   type UserSettings,
-  type InsertUserSettings,
   type IndicatorConfig,
   type InsertIndicatorConfig,
   type Position,
@@ -23,7 +21,6 @@ import {
   type Signal,
   type InsertSignal,
   type UserPairSetting,
-  type InsertUserPairSetting,
   type MarketData,
   type ClosedPosition,
   type InsertClosedPosition,
@@ -32,6 +29,10 @@ import {
 import { db } from "./db";
 import * as positionsRepo from "./db/positionsRepo";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
+
+export type InsertUser = Omit<User, "id" | "createdAt"> & { password?: string };
+export type InsertUserSettings = Omit<UserSettings, "id" | "createdAt" | "updatedAt"> & { userId: string };
+export type InsertUserPairSetting = { userId: string; symbol: string; activeTimeframes: string[] };
 
 export interface ClosedPositionSummary extends ClosedPosition {
   pnlPct: number;
@@ -101,7 +102,6 @@ export interface IStorage {
 
   getUserPairSettings(userId: string, symbol?: string): Promise<UserPairSetting[]>;
   upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting>;
-  upsertUserPairSettingsRaw(userId: string, symbol: string, active: string[]): Promise<UserPairSetting>;
 
   getMarketData(symbols?: string[]): Promise<MarketData[]>;
   updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void>;
@@ -513,39 +513,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting> {
-    const now = new Date();
-    const payload: typeof userPairSettings.$inferInsert = {
-      userId: setting.userId,
-      symbol: setting.symbol,
-      activeTimeframes: Array.isArray(setting.activeTimeframes)
-        ? [...setting.activeTimeframes]
-        : [],
-      updatedAt: now,
-    };
-
-    const [row] = await db
-      .insert(userPairSettings)
-      .values(payload)
-      .onConflictDoUpdate({
-        target: userPairSettings.userSymbolUnique,
-        set: {
-          activeTimeframes: payload.activeTimeframes,
-          updatedAt: payload.updatedAt ?? now,
-        },
-      })
-      .returning();
-
-    return row!;
-  }
-
-  async upsertUserPairSettingsRaw(userId: string, symbol: string, active: string[]): Promise<UserPairSetting> {
-    const normalized = Array.isArray(active)
-      ? Array.from(new Set(active.filter((value): value is string => typeof value === "string")))
+    const active = Array.isArray(setting.activeTimeframes)
+      ? setting.activeTimeframes.filter((value): value is string => typeof value === "string" && value.length > 0)
       : [];
 
     const result = await db.execute(sql`
       INSERT INTO public."user_pair_settings" ("user_id", "symbol", "active_timeframes", "updated_at")
-      VALUES (${userId}, ${symbol}, ${sql.array(normalized, "text")}, NOW())
+      VALUES (${setting.userId}, ${setting.symbol}, ${sql.array(active, "text")}, NOW())
       ON CONFLICT ON CONSTRAINT user_pair_settings_user_symbol_uniq
       DO UPDATE SET "active_timeframes" = EXCLUDED."active_timeframes", "updated_at" = NOW()
       RETURNING *;

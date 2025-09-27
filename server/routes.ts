@@ -84,11 +84,30 @@ const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
   },
 ];
 
+const DDL_GUARD_QUERIES: string[] = [
+  `
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name='user_pair_settings' AND column_name='active_timeframes'
+      ) THEN
+        ALTER TABLE public."user_pair_settings" ADD COLUMN active_timeframes TEXT[] DEFAULT '{}'::text[];
+      END IF;
+    END $$;
+  `,
+];
+
 const SUP = new Set(SUPPORTED_TIMEFRAMES);
 
 function runUserSettingsGuard(): Promise<void> {
   if (!userSettingsGuardPromise) {
-    userSettingsGuardPromise = ensureUserSettingsGuard(pool).catch((error) => {
+    userSettingsGuardPromise = (async () => {
+      await ensureUserSettingsGuard(pool);
+      for (const statement of DDL_GUARD_QUERIES) {
+        await pool.query(statement);
+      }
+    })().catch((error) => {
       console.error("[userSettingsGuard] failed to self-heal user_settings table", error);
       throw error;
     });
@@ -1186,31 +1205,9 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.get("/api/market/24h", async (req, res) => {
     try {
-      const rawSymbols = req.query.symbols;
-      const requestedSymbols = Array.isArray(rawSymbols)
-        ? rawSymbols
-            .flatMap((value) =>
-              typeof value === "string"
-                ? value
-                    .split(",")
-                    .map((part) => part.trim())
-                    .filter((part) => part.length > 0)
-                : [],
-            )
-        : typeof rawSymbols === "string"
-        ? rawSymbols
-            .split(",")
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-        : [];
-
-      const symbols = await resolveSymbolsForMarketChange(requestedSymbols);
-
-      if (symbols.length === 0) {
-        return res.json({ items: [] });
-      }
-
-      const items = await get24hChangeForSymbols(symbols);
+      const symbolsParam = typeof req.query.symbols === "string" ? String(req.query.symbols) : "";
+      const symbols = await resolveSymbolsForMarketChange(symbolsParam);
+      const items = await get24hChangeForSymbols(symbols.length ? symbols : undefined);
       res.json({ items });
     } catch (error) {
       respondWithError(res, "GET /api/market/24h", error, "Failed to fetch 24h market change");
@@ -2042,7 +2039,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const { user } = await ensureDefaultUser();
       const activeTimeframes = normalizeActiveTimeframes(parsed.data.activeTimeframes);
 
-      const result = await storage.upsertUserPairSettingsRaw(user.id, symbol, activeTimeframes);
+      const result = await storage.upsertUserPairSettings({
+        userId: user.id,
+        symbol,
+        activeTimeframes,
+      });
 
       res.json({ activeTimeframes: Array.isArray(result.activeTimeframes) ? result.activeTimeframes : [] });
     } catch (error) {
