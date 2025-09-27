@@ -199,6 +199,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         description: "Position opened successfully",
         variant: "default",
       });
+      queryClient.invalidateQueries({ queryKey: ["positions:open"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
       if (userId) {
         queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] });
         queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] });
@@ -353,9 +355,6 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   };
 
   const handlePlaceOrder = () => {
-    if (createPositionMutation.isPending) {
-      return;
-    }
     void form.handleSubmit(onSubmit)();
   };
 
@@ -610,7 +609,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             <Button
               type="button"
               className="w-full"
-              disabled={isFormDisabled}
+              disabled={isPending || !form.getValues('symbol')}
               onClick={handlePlaceOrder}
               data-testid="button-place-order"
             >

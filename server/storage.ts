@@ -101,6 +101,7 @@ export interface IStorage {
 
   getUserPairSettings(userId: string, symbol?: string): Promise<UserPairSetting[]>;
   upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting>;
+  upsertUserPairSettingsRaw(userId: string, symbol: string, active: string[]): Promise<UserPairSetting>;
 
   getMarketData(symbols?: string[]): Promise<MarketData[]>;
   updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void>;
@@ -131,6 +132,17 @@ function mapPositionRow(row: Record<string, any>): Position {
     openedAt: row.opened_at,
     updatedAt: row.updated_at ?? undefined,
     closedAt: row.closed_at ?? undefined,
+  };
+}
+
+function mapUserPairSettingRow(row: Record<string, any>): UserPairSetting {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    symbol: row.symbol,
+    activeTimeframes: Array.isArray(row.active_timeframes) ? [...row.active_timeframes] : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -524,6 +536,27 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     return row!;
+  }
+
+  async upsertUserPairSettingsRaw(userId: string, symbol: string, active: string[]): Promise<UserPairSetting> {
+    const normalized = Array.isArray(active)
+      ? Array.from(new Set(active.filter((value): value is string => typeof value === "string")))
+      : [];
+
+    const result = await db.execute(sql`
+      INSERT INTO public."user_pair_settings" ("user_id", "symbol", "active_timeframes", "updated_at")
+      VALUES (${userId}, ${symbol}, ${sql.array(normalized, "text")}, NOW())
+      ON CONFLICT ON CONSTRAINT user_pair_settings_user_symbol_uniq
+      DO UPDATE SET "active_timeframes" = EXCLUDED."active_timeframes", "updated_at" = NOW()
+      RETURNING *;
+    `);
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Failed to upsert user pair settings");
+    }
+
+    return mapUserPairSettingRow(row);
   }
 
   async getMarketData(symbols?: string[]): Promise<MarketData[]> {

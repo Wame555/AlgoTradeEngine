@@ -120,25 +120,30 @@ export async function createQuickTradePosition({
   const orderId = randomUUID();
 
   try {
+    const insertPayload: typeof positions.$inferInsert = {
+      userId,
+      symbol,
+      side,
+      qty: qtyStr,
+      size: sizeStr,
+      entryPrice: entryPriceStr,
+      currentPrice: entryPriceStr,
+      leverage: leverageStr,
+      amountUsd: amountUsdStr,
+      status: "OPEN",
+      orderId,
+    };
+
+    if (tpStr) {
+      insertPayload.tpPrice = tpStr;
+    }
+    if (slStr) {
+      insertPayload.slPrice = slStr;
+    }
+
     const [inserted] = await db
       .insert(positions)
-      .values({
-        userId,
-        symbol,
-        side,
-        qty: qtyStr,
-        size: sizeStr,
-        entryPrice: entryPriceStr,
-        currentPrice: entryPriceStr,
-        leverage: leverageStr,
-        amountUsd: amountUsdStr,
-        tpPrice: tpStr,
-        slPrice: slStr,
-        takeProfit: tpStr ?? undefined,
-        stopLoss: slStr ?? undefined,
-        status: "OPEN",
-        orderId,
-      })
+      .values(insertPayload)
       .returning({ id: positions.id, orderId: positions.orderId });
 
     if (!inserted) {

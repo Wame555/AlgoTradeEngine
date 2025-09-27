@@ -34,11 +34,8 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
 
   useEffect(() => {
     if (!selectedPair) return;
-    if (!Array.isArray(pairTimeframeData)) {
-      setSelectedTimeframes([]);
-      return;
-    }
-    const valid = pairTimeframeData.filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as typeof SUPPORTED_TIMEFRAMES[number]));
+    const list = Array.isArray(pairTimeframeData) ? pairTimeframeData : [];
+    const valid = list.filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as typeof SUPPORTED_TIMEFRAMES[number]));
     setSelectedTimeframes(valid);
   }, [pairTimeframeData, selectedPair]);
 
