@@ -29,6 +29,7 @@ import {
 } from "@shared/schema";
 
 import { db } from "./db";
+import * as positionsRepo from "./db/positionsRepo";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
 
 export interface ClosedPositionSummary extends ClosedPosition {
@@ -105,13 +106,14 @@ export interface IStorage {
 }
 
 function mapPositionRow(row: Record<string, any>): Position {
+  const qtyValue = row.qty ?? row.size ?? undefined;
   return {
     id: row.id,
     userId: row.user_id,
     symbol: row.symbol,
     side: row.side,
     size: row.size,
-    qty: row.qty ?? undefined,
+    qty: qtyValue ?? undefined,
     entryPrice: row.entry_price,
     currentPrice: row.current_price ?? undefined,
     pnl: row.pnl ?? undefined,
@@ -302,46 +304,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOpenPositions(userId: string): Promise<Position[]> {
-    const result = await db.execute(
-      sql`
-        WITH deduped AS (
-          SELECT DISTINCT ON (p.symbol, p.side, p.entry_price, p.opened_at)
-            p.*
-          FROM ${positions} p
-          WHERE p.user_id = ${userId} AND p.status = 'OPEN'
-          ORDER BY p.symbol, p.side, p.entry_price, p.opened_at DESC
-        )
-        SELECT * FROM deduped
-        ORDER BY opened_at DESC;
-      `,
-    );
-
-    return result.rows.map((row) => mapPositionRow(row));
+    const rows = await positionsRepo.selectDedupedOpenPositions(userId);
+    return rows.map((row) => mapPositionRow(row));
   }
 
 
   async getAllOpenPositions(): Promise<Position[]> {
-    const rows = await db
-      .select()
-      .from(positions)
-      .where(eq(positions.status, "OPEN"));
-
-    return rows;
+    const rows = await positionsRepo.selectAllOpenPositions();
+    return rows.map((row) => mapPositionRow(row));
   }
 
   async getPositionById(id: string): Promise<Position | undefined> {
-    const [position] = await db.select().from(positions).where(eq(positions.id, id)).limit(1);
-    return position;
+    const row = await positionsRepo.selectPositionById(id);
+    return row ? mapPositionRow(row) : undefined;
   }
 
   async createPosition(position: InsertPosition): Promise<Position> {
     const id = randomUUID();
     const timestamp = new Date();
-    const [result] = await db
-      .insert(positions)
-      .values({ ...position, id, updatedAt: timestamp })
-      .returning();
-    return result;
+    const row = await positionsRepo.insertPosition({ ...position, id, updatedAt: timestamp });
+    return mapPositionRow(row);
   }
 
   async updatePosition(id: string, updates: Partial<Position>): Promise<Position> {
@@ -349,8 +331,11 @@ export class DatabaseStorage implements IStorage {
       ...updates,
       updatedAt: new Date(),
     };
-    const [result] = await db.update(positions).set(payload).where(eq(positions.id, id)).returning();
-    return result;
+    const row = await positionsRepo.updatePosition(id, payload);
+    if (!row) {
+      throw new Error(`Position ${id} not found`);
+    }
+    return mapPositionRow(row);
   }
 
   async closePosition(
@@ -371,26 +356,22 @@ export class DatabaseStorage implements IStorage {
       updateData.pnl = updates.pnl;
     }
 
-    const [result] = await db
-      .update(positions)
-      .set(updateData)
-      .where(eq(positions.id, id))
-      .returning();
-    return result;
+    const row = await positionsRepo.updatePosition(id, updateData);
+    if (!row) {
+      throw new Error(`Position ${id} not found`);
+    }
+    return mapPositionRow(row);
   }
 
   async closeAllUserPositions(
     userId: string,
     computeUpdates?: (position: Position) => { closePrice?: string; pnl?: string },
   ): Promise<Position[]> {
-    const openPositions = await db
-      .select()
-      .from(positions)
-      .where(and(eq(positions.userId, userId), eq(positions.status, "OPEN")));
-
+    const openRows = await positionsRepo.selectOpenPositionsByUser(userId);
     const results: Position[] = [];
 
-    for (const position of openPositions) {
+    for (const row of openRows) {
+      const position = mapPositionRow(row);
       const updates = computeUpdates ? computeUpdates(position) : {};
       const updateData: Partial<typeof positions.$inferInsert> = {
         status: "CLOSED",
@@ -406,13 +387,10 @@ export class DatabaseStorage implements IStorage {
         updateData.pnl = updates.pnl;
       }
 
-      const [result] = await db
-        .update(positions)
-        .set(updateData)
-        .where(eq(positions.id, position.id))
-        .returning();
-
-      results.push(result);
+      const updatedRow = await positionsRepo.updatePosition(position.id, updateData);
+      if (updatedRow) {
+        results.push(mapPositionRow(updatedRow));
+      }
     }
 
     return results;

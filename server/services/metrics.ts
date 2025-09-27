@@ -69,16 +69,26 @@ function buildMetric(value: number, partialData: boolean): MetricValue {
 }
 
 function resolveQty(position: Position): number {
-  const qty = safeNumber(position.qty);
-  if (qty > 0) {
-    return qty;
-  }
-  const sizeUsd = safeNumber(position.size);
+  const rawQty = safeNumber(position.qty);
+  const sizeValue = safeNumber(position.size);
   const entryPrice = safeNumber(position.entryPrice);
-  if (sizeUsd > 0 && entryPrice > 0) {
-    const computed = sizeUsd / entryPrice;
+
+  if (rawQty > 0) {
+    const qtyMatchesSize = sizeValue > 0 && Math.abs(rawQty - sizeValue) <= 1e-8;
+    if (!qtyMatchesSize) {
+      return rawQty;
+    }
+  }
+
+  if (sizeValue > 0 && entryPrice > 0) {
+    const computed = sizeValue / entryPrice;
     return Number.isFinite(computed) ? computed : 0;
   }
+
+  if (rawQty > 0) {
+    return rawQty;
+  }
+
   return 0;
 }
 

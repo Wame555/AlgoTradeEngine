@@ -21,15 +21,26 @@ const parseNumeric = (value: unknown): number | undefined => {
 
 const resolveQty = (position: Position): number => {
   const storedQty = parseNumeric(position.qty);
+  const sizeValue = parseNumeric(position.size);
+  const entry = parseNumeric(position.entryPrice);
+
+  if (typeof storedQty === "number" && storedQty > 0) {
+    const qtyMatchesSize =
+      typeof sizeValue === "number" && sizeValue > 0 && Math.abs(storedQty - sizeValue) <= 1e-8;
+    if (!qtyMatchesSize) {
+      return Number(storedQty.toFixed(8));
+    }
+  }
+
+  if (typeof sizeValue === "number" && typeof entry === "number" && entry > 0) {
+    const computed = sizeValue / entry;
+    return Number.isFinite(computed) ? Number(computed.toFixed(8)) : 0;
+  }
+
   if (typeof storedQty === "number" && storedQty > 0) {
     return Number(storedQty.toFixed(8));
   }
-  const sizeUsd = parseNumeric(position.size);
-  const entry = parseNumeric(position.entryPrice);
-  if (typeof sizeUsd === "number" && typeof entry === "number" && entry > 0) {
-    const computed = sizeUsd / entry;
-    return Number.isFinite(computed) ? Number(computed.toFixed(8)) : 0;
-  }
+
   return 0;
 };
 
