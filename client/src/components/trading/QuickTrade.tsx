@@ -190,7 +190,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         payload.leverage = data.leverage;
       }
 
-      await apiRequest('POST', '/api/positions', payload);
+      await apiRequest('POST', '/api/trade/quick', payload);
     },
     onSuccess: () => {
       setHasEquityError(false);
@@ -373,6 +373,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   const availablePairs = tradingPairs ?? [];
   const tradingDisabled = availablePairs.length === 0 || !userId;
+  const isPending = createPositionMutation.isPending;
+  const isFormDisabled = tradingDisabled || isPending;
   const mode = form.watch('mode');
   const watchedQty = form.watch('size');
   const watchedAmount = form.watch('amountUsd');
@@ -411,7 +413,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Symbol</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange} disabled={availablePairs.length === 0}>
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isFormDisabled}>
                     <FormControl>
                       <SelectTrigger data-testid="select-symbol">
                         <SelectValue placeholder={availablePairs.length === 0 ? 'No pairs available' : 'Select symbol'} />
@@ -442,10 +444,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     onValueChange={(value) => field.onChange(value || 'QTY')}
                     className="grid grid-cols-2 gap-2"
                   >
-                    <ToggleGroupItem value="QTY" aria-label="Quantity mode">
+                    <ToggleGroupItem value="QTY" aria-label="Quantity mode" disabled={isFormDisabled}>
                       Qty
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="USDT" aria-label="USDT mode">
+                    <ToggleGroupItem value="USDT" aria-label="USDT mode" disabled={isFormDisabled}>
                       USDT
                     </ToggleGroupItem>
                   </ToggleGroup>
@@ -469,6 +471,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                         inputMode="decimal"
                         {...field}
                         data-testid="input-size"
+                        disabled={isFormDisabled}
                       />
                     </FormControl>
                     <FormMessage />
@@ -492,6 +495,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                         inputMode="decimal"
                         {...field}
                         data-testid="input-amount-usd"
+                        disabled={isFormDisabled}
                       />
                     </FormControl>
                     <FormMessage />
@@ -509,6 +513,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                   <Select
                     value={field.value.toString()}
                     onValueChange={(value) => field.onChange(parseInt(value, 10))}
+                    disabled={isFormDisabled}
                   >
                     <FormControl>
                       <SelectTrigger data-testid="select-leverage">
@@ -540,6 +545,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                         step="0.1"
                         {...field}
                         data-testid="input-stop-loss"
+                        disabled={isFormDisabled}
                       />
                     </FormControl>
                     <FormMessage />
@@ -560,6 +566,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                         step="0.1"
                         {...field}
                         data-testid="input-take-profit"
+                        disabled={isFormDisabled}
                       />
                     </FormControl>
                     <FormMessage />
@@ -578,6 +585,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 }`}
                 onClick={() => handleSideClick('LONG')}
                 data-testid="button-long"
+                disabled={isFormDisabled}
               >
                 <TrendingUp className="mr-2 h-4 w-4" />
                 Long
@@ -592,6 +600,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 }`}
                 onClick={() => handleSideClick('SHORT')}
                 data-testid="button-short"
+                disabled={isFormDisabled}
               >
                 <TrendingDown className="mr-2 h-4 w-4" />
                 Short
@@ -601,11 +610,11 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             <Button
               type="button"
               className="w-full"
-              disabled={createPositionMutation.isPending || tradingDisabled}
+              disabled={isFormDisabled}
               onClick={handlePlaceOrder}
               data-testid="button-place-order"
             >
-              {createPositionMutation.isPending ? 'Placing Order...' : 'Place Order'}
+              {isPending ? 'Placing Order...' : 'Place Order'}
             </Button>
             {hasEquityError && (
               <p className="text-sm text-red-500" role="alert">

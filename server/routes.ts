@@ -36,6 +36,7 @@ import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
 import { getLastPrice as getMetricsLastPrice } from "./services/metrics";
+import { createQuickTradePosition, QuickTradeError } from "./services/quickTrade";
 import {
   SUPPORTED_TIMEFRAMES,
   type OpenPositionResponse,
@@ -1354,6 +1355,59 @@ export function registerRoutes(app: Express, deps: Deps): void {
       res.json(closed);
     } catch (error) {
       respondWithError(res, "GET /api/positions/closed", error, "Failed to fetch closed positions");
+    }
+  });
+
+  app.post("/api/trade/quick", async (req, res) => {
+    const parsed = quickTradeRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const firstError = parsed.error.errors[0]?.message ?? "Invalid request";
+      return res.status(400).json({ code: "BAD_REQUEST", message: firstError });
+    }
+
+    try {
+      const payload = parsed.data;
+      const symbol = payload.symbol.toUpperCase();
+
+      const { user, settings } = await ensureDefaultUser();
+      const metricsPrice = await getMetricsLastPrice(symbol);
+      let entryPrice = Number(metricsPrice?.value ?? 0);
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+        const fallbackPrice = getPaperLastPrice(symbol);
+        if (Number.isFinite(fallbackPrice) && typeof fallbackPrice === "number" && fallbackPrice > 0) {
+          entryPrice = fallbackPrice;
+        }
+      }
+
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+        return res.status(400).json({
+          code: "NO_MARKET_PRICE",
+          message: "No market price available for the selected symbol",
+        });
+      }
+
+      const defaultLeverage = Number(settings?.defaultLeverage ?? 1);
+      const leverageValue = Number.isFinite(defaultLeverage) && defaultLeverage > 0 ? defaultLeverage : 1;
+
+      const result = await createQuickTradePosition({
+        userId: user.id,
+        payload,
+        defaultLeverage: leverageValue,
+        entryPrice,
+      });
+
+      clearCacheKey("positions:open");
+      clearCacheKey(`positions:open:${user.id}`);
+
+      return res.status(201).json({ orderId: result.orderId, accepted: true });
+    } catch (error) {
+      if (error instanceof QuickTradeError) {
+        if (error.code === "DB_ERROR") {
+          return res.status(400).json({ code: "DB_ERROR" });
+        }
+        return res.status(400).json({ code: error.code, message: error.message });
+      }
+      return respondWithError(res, "POST /api/trade/quick", error, "Failed to create quick trade position");
     }
   });
 
