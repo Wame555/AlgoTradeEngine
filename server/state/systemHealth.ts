@@ -50,9 +50,9 @@ export function incrementBackfillProgress(timeframe: string, delta: number): voi
 
 export function getBackfillSnapshot(): Record<string, BackfillEntry> {
   const snapshot: Record<string, BackfillEntry> = {};
-  for (const [timeframe, entry] of backfillProgress.entries()) {
+  backfillProgress.forEach((entry, timeframe) => {
     snapshot[timeframe] = { done: entry.done, target: entry.target };
-  }
+  });
   return snapshot;
 }
 

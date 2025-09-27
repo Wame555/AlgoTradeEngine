@@ -73,6 +73,7 @@ export interface IStorage {
   ensureIndicatorConfigsSeed(userId: string): Promise<void>;
 
   getOpenPositions(userId: string): Promise<Position[]>;
+  getAllOpenPositions(): Promise<Position[]>;
   getPositionById(id: string): Promise<Position | undefined>;
   createPosition(position: InsertPosition): Promise<Position>;
   updatePosition(id: string, updates: Partial<Position>): Promise<Position>;
@@ -110,15 +111,19 @@ function mapPositionRow(row: Record<string, any>): Position {
     symbol: row.symbol,
     side: row.side,
     size: row.size,
+    qty: row.qty ?? undefined,
     entryPrice: row.entry_price,
     currentPrice: row.current_price ?? undefined,
     pnl: row.pnl ?? undefined,
     stopLoss: row.stop_loss ?? undefined,
     takeProfit: row.take_profit ?? undefined,
+    tpPrice: row.tp_price ?? undefined,
+    slPrice: row.sl_price ?? undefined,
     trailingStopPercent: row.trailing_stop_percent ?? undefined,
     status: row.status,
     orderId: row.order_id ?? undefined,
     openedAt: row.opened_at,
+    updatedAt: row.updated_at ?? undefined,
     closedAt: row.closed_at ?? undefined,
   };
 }
@@ -314,6 +319,16 @@ export class DatabaseStorage implements IStorage {
     return result.rows.map((row) => mapPositionRow(row));
   }
 
+
+  async getAllOpenPositions(): Promise<Position[]> {
+    const rows = await db
+      .select()
+      .from(positions)
+      .where(eq(positions.status, "OPEN"));
+
+    return rows;
+  }
+
   async getPositionById(id: string): Promise<Position | undefined> {
     const [position] = await db.select().from(positions).where(eq(positions.id, id)).limit(1);
     return position;
@@ -321,12 +336,20 @@ export class DatabaseStorage implements IStorage {
 
   async createPosition(position: InsertPosition): Promise<Position> {
     const id = randomUUID();
-    const [result] = await db.insert(positions).values({ ...position, id }).returning();
+    const timestamp = new Date();
+    const [result] = await db
+      .insert(positions)
+      .values({ ...position, id, updatedAt: timestamp })
+      .returning();
     return result;
   }
 
   async updatePosition(id: string, updates: Partial<Position>): Promise<Position> {
-    const [result] = await db.update(positions).set(updates).where(eq(positions.id, id)).returning();
+    const payload: Partial<typeof positions.$inferInsert> = {
+      ...updates,
+      updatedAt: new Date(),
+    };
+    const [result] = await db.update(positions).set(payload).where(eq(positions.id, id)).returning();
     return result;
   }
 
@@ -337,6 +360,7 @@ export class DatabaseStorage implements IStorage {
     const updateData: Partial<typeof positions.$inferInsert> = {
       status: "CLOSED",
       closedAt: new Date(),
+      updatedAt: new Date(),
     };
 
     if (updates.closePrice !== undefined) {
@@ -371,6 +395,7 @@ export class DatabaseStorage implements IStorage {
       const updateData: Partial<typeof positions.$inferInsert> = {
         status: "CLOSED",
         closedAt: new Date(),
+        updatedAt: new Date(),
       };
 
       if (updates?.closePrice !== undefined) {

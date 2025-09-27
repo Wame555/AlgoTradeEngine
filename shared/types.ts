@@ -25,24 +25,20 @@ export interface StatsChangeResponse {
 
 export interface OpenPositionResponse {
   id: string;
-  userId: string;
   symbol: string;
   side: 'LONG' | 'SHORT';
-  size: string;
+  sizeUsd: string;
+  qty: string;
   entryPrice: string;
   currentPrice?: string;
-  pnl?: string;
-  stopLoss?: string;
-  takeProfit?: string;
-  trailingStopPercent?: number;
+  pnlUsd: string;
+  tpPrice?: string | null;
+  slPrice?: string | null;
   status: string;
-  orderId?: string;
   openedAt: string;
   closedAt?: string;
-  changePctByTimeframe: Record<SupportedTimeframe, number>;
-  pnlByTimeframe: Record<SupportedTimeframe, number>;
-  partialData?: boolean;
-  partialDataByTimeframe?: Record<SupportedTimeframe, boolean>;
+  userId?: string;
+  orderId?: string;
 }
 
 export interface StatsSummaryResponse {
