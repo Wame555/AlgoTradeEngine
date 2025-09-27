@@ -17,8 +17,12 @@ export class TelegramService {
 
   constructor() {
     // Initialize with environment variables if available
-    this.botToken = process.env.TELEGRAM_BOT_TOKEN || '';
-    this.chatId = process.env.TELEGRAM_CHAT_ID || '';
+    this.botToken = this.sanitize(process.env.TELEGRAM_BOT_TOKEN);
+    this.chatId = this.sanitize(process.env.TELEGRAM_CHAT_ID);
+  }
+
+  private sanitize(value?: string): string {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private isEnabled(): boolean {
@@ -26,15 +30,15 @@ export class TelegramService {
   }
 
   updateCredentials(botToken: string, chatId: string) {
-    this.botToken = botToken;
-    this.chatId = chatId;
+    this.botToken = this.sanitize(botToken);
+    this.chatId = this.sanitize(chatId);
   }
 
   async testConnection(botToken?: string, chatId?: string): Promise<boolean> {
     try {
-      const token = botToken || this.botToken;
-      const chat = chatId || this.chatId;
-      
+      const token = this.sanitize(botToken ?? this.botToken);
+      const chat = this.sanitize(chatId ?? this.chatId);
+
       if (!token || !chat) {
         return false;
       }
@@ -51,8 +55,24 @@ export class TelegramService {
         }),
       });
 
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.warn(
+          `[telegram] test request failed with status ${response.status}: ${body}`,
+        );
+        return false;
+      }
+
       const data = await response.json();
-      return data.ok === true;
+      if (data?.ok === true) {
+        return true;
+      }
+
+      if (data?.description) {
+        console.warn(`[telegram] test rejected: ${data.description}`);
+      }
+
+      return false;
     } catch (error) {
       console.error('Telegram test error:', error);
       return false;
