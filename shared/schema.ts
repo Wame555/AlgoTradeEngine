@@ -95,29 +95,35 @@ export const indicatorConfigs = pgTable(
 );
 
 // Trading positions
-export const positions = pgTable("positions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull(),
-  symbol: varchar("symbol", { length: 20 }).notNull(),
-  side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
-  size: decimal("size", { precision: 18, scale: 8 }).notNull(),
-  qty: decimal("qty", { precision: 18, scale: 8 }).notNull().default("0"),
-  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
-  currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
-  pnl: decimal("pnl", { precision: 18, scale: 8 }).default("0"),
-  stopLoss: decimal("stop_loss", { precision: 18, scale: 8 }),
-  takeProfit: decimal("take_profit", { precision: 18, scale: 8 }),
-  tpPrice: decimal("tp_price", { precision: 18, scale: 8 }),
-  slPrice: decimal("sl_price", { precision: 18, scale: 8 }),
-  leverage: numeric("leverage", { precision: 10, scale: 2 }).notNull().default("1"),
-  amountUsd: numeric("amount_usd", { precision: 18, scale: 2 }),
-  trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
-  status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
-  orderId: varchar("order_id", { length: 50 }),
-  openedAt: timestamp("opened_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  closedAt: timestamp("closed_at"),
-});
+export const positions = pgTable(
+  "positions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id").notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    side: varchar("side", { length: 10 }).notNull(), // LONG, SHORT
+    size: decimal("size", { precision: 18, scale: 8 }).notNull(),
+    qty: numeric("qty", { precision: 18, scale: 8 }).notNull().default("0"),
+    entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
+    currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
+    pnl: decimal("pnl", { precision: 18, scale: 8 }).default("0"),
+    stopLoss: decimal("stop_loss", { precision: 18, scale: 8 }),
+    takeProfit: decimal("take_profit", { precision: 18, scale: 8 }),
+    tpPrice: numeric("tp_price", { precision: 18, scale: 8 }),
+    slPrice: numeric("sl_price", { precision: 18, scale: 8 }),
+    leverage: numeric("leverage", { precision: 10, scale: 2 }).notNull().default("1"),
+    amountUsd: numeric("amount_usd", { precision: 18, scale: 2 }),
+    trailingStopPercent: numeric("trailing_stop_percent", { precision: 6, scale: 2 }),
+    status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
+    orderId: varchar("order_id", { length: 50 }),
+    openedAt: timestamp("opened_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+    closedAt: timestamp("closed_at"),
+  },
+  (table) => ({
+    userIdx: index("idx_positions_user").on(table.userId),
+  }),
+);
 
 // Closed positions
 export const closedPositions = pgTable(
@@ -173,6 +179,25 @@ export const pairTimeframes = pgTable(
   }),
 );
 
+export const userPairSettings = pgTable(
+  "user_pair_settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    activeTimeframes: text("active_timeframes").array().notNull().default(sql`ARRAY[]::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    userSymbolUnique: unique("user_pair_settings_user_symbol_uniq").on(table.userId, table.symbol),
+    userIdx: index("idx_user_pair_settings_user").on(table.userId),
+    symbolIdx: index("idx_user_pair_settings_symbol").on(table.symbol),
+  }),
+);
+
 // Market data cache
 export const marketData = pgTable(
   "market_data",
@@ -196,6 +221,11 @@ export const marketData = pgTable(
     symbolTimeframeIndex: index("idx_market_data_symbol_timeframe").on(
       table.symbol,
       table.timeframe,
+    ),
+    symbolTimeframeTsIndex: index("idx_market_data_sym_tf_ts").on(
+      table.symbol,
+      table.timeframe,
+      table.ts,
     ),
   }),
 );
@@ -237,6 +267,12 @@ export const insertPairTimeframeSchema = createInsertSchema(pairTimeframes).omit
   createdAt: true,
 });
 
+export const insertUserPairSettingsSchema = createInsertSchema(userPairSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -251,6 +287,8 @@ export type Signal = typeof signals.$inferSelect;
 export type InsertSignal = z.infer<typeof insertSignalSchema>;
 export type PairTimeframe = typeof pairTimeframes.$inferSelect;
 export type InsertPairTimeframe = z.infer<typeof insertPairTimeframeSchema>;
+export type UserPairSetting = typeof userPairSettings.$inferSelect;
+export type InsertUserPairSetting = z.infer<typeof insertUserPairSettingsSchema>;
 export type ClosedPosition = typeof closedPositions.$inferSelect;
 export type InsertClosedPosition = typeof closedPositions.$inferInsert;
 export type MarketData = typeof marketData.$inferSelect;

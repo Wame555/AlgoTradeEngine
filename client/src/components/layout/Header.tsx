@@ -37,7 +37,6 @@ export function Header({ isConnected }: HeaderProps) {
   const totalBalance = statsSummary?.totalBalance ?? statsSummary?.balance ?? 0;
   const equity = statsSummary?.equity ?? (totalBalance + (statsSummary?.openPnL ?? 0));
   const openPnL = statsSummary?.openPnL ?? 0;
-  const dailyPnl = statsSummary?.dailyPnl ?? 0;
 
   const formatCurrency = (value?: number) => {
     if (value == null || Number.isNaN(value)) return "-";
@@ -134,15 +133,6 @@ export function Header({ isConnected }: HeaderProps) {
           <div className="text-sm text-muted-foreground">Equity</div>
           <div className="font-mono text-lg font-semibold" data-testid="account-equity">
             {formatCurrency(equity)}
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-sm text-muted-foreground">24h P&amp;L</div>
-          <div
-            className={`font-mono text-lg font-semibold ${dailyPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}
-            data-testid="daily-pnl"
-          >
-            {formatPnL(dailyPnl)}
           </div>
         </div>
         <div className="text-right">

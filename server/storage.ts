@@ -7,7 +7,7 @@ import {
   indicatorConfigs,
   positions,
   signals,
-  pairTimeframes,
+  userPairSettings,
   marketData,
   tradingPairs,
   closedPositions,
@@ -22,7 +22,8 @@ import {
   type InsertPosition,
   type Signal,
   type InsertSignal,
-  type PairTimeframe,
+  type UserPairSetting,
+  type InsertUserPairSetting,
   type MarketData,
   type ClosedPosition,
   type InsertClosedPosition,
@@ -98,8 +99,8 @@ export interface IStorage {
   getSignalsBySymbol(symbol: string, limit?: number): Promise<Signal[]>;
   createSignal(signal: InsertSignal): Promise<Signal>;
 
-  getPairTimeframes(symbol?: string): Promise<PairTimeframe[]>;
-  replacePairTimeframes(symbol: string, timeframes: string[]): Promise<PairTimeframe[]>;
+  getUserPairSettings(userId: string, symbol?: string): Promise<UserPairSetting[]>;
+  upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting>;
 
   getMarketData(symbols?: string[]): Promise<MarketData[]>;
   updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void>;
@@ -485,34 +486,44 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getPairTimeframes(symbol?: string): Promise<PairTimeframe[]> {
+  async getUserPairSettings(userId: string, symbol?: string): Promise<UserPairSetting[]> {
     if (symbol) {
-      return db.select().from(pairTimeframes).where(eq(pairTimeframes.symbol, symbol));
+      return db
+        .select()
+        .from(userPairSettings)
+        .where(and(eq(userPairSettings.userId, userId), eq(userPairSettings.symbol, symbol)));
     }
-    return db.select().from(pairTimeframes);
+
+    return db
+      .select()
+      .from(userPairSettings)
+      .where(eq(userPairSettings.userId, userId));
   }
 
-  async replacePairTimeframes(symbol: string, timeframes: string[]): Promise<PairTimeframe[]> {
-    return db.transaction(async (tx) => {
-      await tx.delete(pairTimeframes).where(eq(pairTimeframes.symbol, symbol));
+  async upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting> {
+    const now = new Date();
+    const payload: typeof userPairSettings.$inferInsert = {
+      userId: setting.userId,
+      symbol: setting.symbol,
+      activeTimeframes: Array.isArray(setting.activeTimeframes)
+        ? [...setting.activeTimeframes]
+        : [],
+      updatedAt: now,
+    };
 
-      if (timeframes.length === 0) {
-        return [] as PairTimeframe[];
-      }
+    const [row] = await db
+      .insert(userPairSettings)
+      .values(payload)
+      .onConflictDoUpdate({
+        target: userPairSettings.userSymbolUnique,
+        set: {
+          activeTimeframes: payload.activeTimeframes,
+          updatedAt: payload.updatedAt ?? now,
+        },
+      })
+      .returning();
 
-      const rows: PairTimeframe[] = [];
-      for (const timeframe of timeframes) {
-        const [row] = await tx
-          .insert(pairTimeframes)
-          .values({ id: randomUUID(), symbol, timeframe })
-          .onConflictDoNothing({ target: [pairTimeframes.symbol, pairTimeframes.timeframe] })
-          .returning();
-        if (row) {
-          rows.push(row);
-        }
-      }
-      return rows;
-    });
+    return row!;
   }
 
   async getMarketData(symbols?: string[]): Promise<MarketData[]> {
@@ -532,7 +543,7 @@ export class DatabaseStorage implements IStorage {
       .insert(marketData)
       .values(data as any)
       .onConflictDoUpdate({
-        target: [marketData.symbol, marketData.timeframe],
+        target: marketData.symbolTimeframeTsUnique,
         set: data as any,
       });
   }

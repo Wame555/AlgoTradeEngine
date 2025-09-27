@@ -42,7 +42,6 @@ interface PairsOverviewProps {
 interface PairRowProps {
   pair: TradingPair;
   priceInfo?: PriceUpdate;
-  change24h: number;
   position?: Position;
   signal?: Signal;
   onOpenPosition: (symbol: string, side: "LONG" | "SHORT") => void;
@@ -107,7 +106,6 @@ function getSignalBadge(signal?: { signal: string; confidence: number }) {
 function PairRow({
   pair,
   priceInfo,
-  change24h,
   position,
   signal,
   onOpenPosition,
@@ -127,6 +125,7 @@ function PairRow({
     );
   }, [availableTimeframes]);
   const { data: changeStats, isLoading } = useChangeStats(pair.symbol, selectedTimeframe);
+  const { data: dailyChangeStats } = useChangeStats(pair.symbol, "1d");
 
   useEffect(() => {
     if (allowedTimeframes.size === 0) {
@@ -152,6 +151,11 @@ function PairRow({
   const pnlClass = trendClass(pnlValue);
   const hasPosition = Boolean(position);
   const price = priceInfo ? `$${parseFloat(priceInfo.price).toFixed(8)}` : "…";
+  const dailyChange =
+    dailyChangeStats && !dailyChangeStats.partialData && Number.isFinite(dailyChangeStats.changePct)
+      ? dailyChangeStats.changePct
+      : undefined;
+  const dailyChangeClass = dailyChange != null ? trendClass(dailyChange) : "text-muted-foreground";
 
   return (
     <tr key={pair.symbol} data-testid={`pair-row-${pair.symbol}`}>
@@ -166,12 +170,10 @@ function PairRow({
         {price}
       </td>
 
-      <td
-        className={cn("text-right font-mono", trendClass(change24h))}
-        data-testid={`change-${pair.symbol}`}
-      >
-        {change24h >= 0 ? "+" : ""}
-        {Number.isFinite(change24h) ? change24h.toFixed(2) : "0.00"}%
+      <td className={cn("text-right font-mono", dailyChangeClass)} data-testid={`change-${pair.symbol}`}>
+        {dailyChange != null
+          ? `${dailyChange >= 0 ? "+" : ""}${dailyChange.toFixed(2)}%`
+          : "—"}
       </td>
 
       <td className="text-right align-top">
@@ -434,14 +436,11 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                   const priceInfo = priceData.get(symbol);
                   const position = getPositionForSymbol(symbol);
                   const signal = getLatestSignalForSymbol(symbol);
-                  const change24h = priceInfo?.change24h ? parseFloat(priceInfo.change24h) : 0;
-
                   return (
                     <PairRow
                       key={symbol}
                       pair={pair}
                       priceInfo={priceInfo}
-                      change24h={change24h}
                       position={position}
                       signal={signal}
                       onOpenPosition={(sym, side) => createPositionMutation.mutate({ symbol: sym, side })}

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -72,6 +72,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const userId = session?.userId;
   const { data: tradingPairs } = useTradingPairs();
   const { data: settings } = useUserSettings();
+  const [hasEquityError, setHasEquityError] = useState(false);
 
   const form = useForm<TradeForm>({
     resolver: zodResolver(tradeFormSchema),
@@ -153,20 +154,34 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         throw new Error('Unable to determine position size');
       }
 
-      const positionData = {
-        userId,
+      const payload: Record<string, unknown> = {
+        mode: data.mode,
         symbol: data.symbol,
         side: data.side,
-        size: sizeToUse,
-        amountUsd: amountToUse,
-        entryPrice: '0',
-        stopLoss: data.stopLoss || undefined,
-        takeProfit: data.takeProfit || undefined,
       };
 
-      await apiRequest('POST', '/api/positions', positionData);
+      if (data.mode === 'QTY') {
+        payload.qty = Number(sizeToUse);
+      } else {
+        payload.usdtAmount = Number(amountToUse);
+      }
+
+      if (data.takeProfit) {
+        payload.tpPrice = Number(data.takeProfit);
+      }
+
+      if (data.stopLoss) {
+        payload.slPrice = Number(data.stopLoss);
+      }
+
+      if (Number.isFinite(data.leverage) && data.leverage > 0) {
+        payload.leverage = data.leverage;
+      }
+
+      await apiRequest('POST', '/api/positions', payload);
     },
     onSuccess: () => {
+      setHasEquityError(false);
       toast({
         title: "Success",
         description: "Position opened successfully",
@@ -188,10 +203,34 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       });
     },
     onError: (error: any) => {
+      const message = typeof error?.message === 'string' ? error.message : 'Failed to open position';
+      let parsed: { code?: string; message?: string } | null = null;
+      const colonIndex = message.indexOf(':');
+      if (colonIndex !== -1) {
+        const maybeJson = message.slice(colonIndex + 1).trim();
+        if (maybeJson.startsWith('{')) {
+          try {
+            parsed = JSON.parse(maybeJson);
+          } catch {
+            parsed = null;
+          }
+        }
+      }
+
+      if (parsed?.code === 'INSUFFICIENT_EQUITY') {
+        setHasEquityError(true);
+        toast({
+          title: 'Nincs elegendő egyenleg',
+          description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       toast({
-        title: "Error",
-        description: error.message || "Failed to open position",
-        variant: "destructive",
+        title: 'Error',
+        description: parsed?.message || message || 'Failed to open position',
+        variant: 'destructive',
       });
     },
   });
@@ -225,6 +264,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const availablePairs = tradingPairs ?? [];
   const tradingDisabled = availablePairs.length === 0 || !userId;
   const mode = form.watch('mode');
+  const watchedQty = form.watch('size');
+  const watchedAmount = form.watch('amountUsd');
 
   useEffect(() => {
     if (mode === 'USDT') {
@@ -241,6 +282,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       }
     }
   }, [mode, form]);
+
+  useEffect(() => {
+    setHasEquityError(false);
+  }, [mode, watchedQty, watchedAmount]);
 
   return (
     <Card>
@@ -446,11 +491,16 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             <Button
               type="submit"
               className="w-full"
-              disabled={createPositionMutation.isPending || tradingDisabled}
+              disabled={createPositionMutation.isPending || tradingDisabled || hasEquityError}
               data-testid="button-place-order"
             >
               {createPositionMutation.isPending ? 'Placing Order...' : 'Place Order'}
             </Button>
+            {hasEquityError && (
+              <p className="text-sm text-red-500" role="alert">
+                Nincs elegendő egyenleg a tranzakció végrehajtásához.
+              </p>
+            )}
           </form>
         </Form>
       </CardContent>
