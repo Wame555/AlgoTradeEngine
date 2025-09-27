@@ -48,6 +48,7 @@ export interface StatsSummaryResponse {
   winRate: number;
   avgRR: number;
   totalPnl: number;
+  dailyPnl: number;
   last30dPnl: number;
   balance: number;
   equity: number;
