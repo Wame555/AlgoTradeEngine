@@ -123,8 +123,18 @@ export function usePairTimeframes(symbol?: string) {
     staleTime: 60 * 1000,
     enabled: Boolean(symbol),
     select: (rows: any) => {
-      if (!Array.isArray(rows)) return [];
-      return rows.map((row: any) => row.timeframe).filter(Boolean);
+      if (!rows) return [];
+      if (Array.isArray(rows)) {
+        const match = rows.find((row) => row?.symbol === symbol);
+        if (match && Array.isArray(match.activeTimeframes)) {
+          return match.activeTimeframes as string[];
+        }
+        return [];
+      }
+      if (Array.isArray(rows.activeTimeframes)) {
+        return rows.activeTimeframes as string[];
+      }
+      return [];
     },
   });
 }

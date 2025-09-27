@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import Decimal from "decimal.js";
 import { cached, MICRO_CACHE_TTL_MS } from "../cache/apiCache";
 import { storage } from "../storage";
 import {
@@ -61,14 +62,22 @@ export async function change(req: Request, res: Response): Promise<void> {
           getLastPrice(symbol),
         ]);
 
-        const prevClose = Number.isFinite(prevCloseResult.value) ? prevCloseResult.value : 0;
-        const lastPrice = Number.isFinite(lastPriceResult.value) ? lastPriceResult.value : 0;
+        const prevCloseDecimal = new Decimal(prevCloseResult.value ?? 0);
+        const lastPriceDecimal = new Decimal(lastPriceResult.value ?? 0);
 
         let partialData = prevCloseResult.partialData || lastPriceResult.partialData;
 
+        const prevClose = prevCloseDecimal.isFinite()
+          ? prevCloseDecimal.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toNumber()
+          : 0;
+        const lastPrice = lastPriceDecimal.isFinite()
+          ? lastPriceDecimal.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toNumber()
+          : 0;
+
         let changePct = 0;
-        if (prevClose > 0 && lastPrice > 0) {
-          changePct = ((lastPrice - prevClose) / prevClose) * 100;
+        if (prevCloseDecimal.gt(0) && lastPriceDecimal.gt(0)) {
+          const changeDecimal = lastPriceDecimal.minus(prevCloseDecimal).div(prevCloseDecimal).times(100);
+          changePct = changeDecimal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
         } else {
           partialData = true;
         }

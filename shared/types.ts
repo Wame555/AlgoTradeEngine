@@ -23,6 +23,11 @@ export interface StatsChangeResponse {
   partialData?: boolean;
 }
 
+export interface PairTimeframeSettingsResponse {
+  symbol: string;
+  activeTimeframes: SupportedTimeframe[];
+}
+
 export interface OpenPositionResponse {
   id: string;
   symbol: string;

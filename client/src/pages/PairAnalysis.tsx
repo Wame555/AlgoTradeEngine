@@ -3,10 +3,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PriceUpdate, SUPPORTED_TIMEFRAMES, TradingPair } from "@/types/trading";
 import { usePairTimeframes, useTradingPairs } from "@/hooks/useTradingData";
+import { useChangeStats } from "@/hooks/useChangeStats";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -20,9 +21,10 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
   const queryClient = useQueryClient();
 
   const [selectedPair, setSelectedPair] = useState<string>('');
-  const [selectedTimeframes, setSelectedTimeframes] = useState<Record<string, boolean>>({});
+  const [selectedTimeframes, setSelectedTimeframes] = useState<string[]>([]);
 
   const { data: pairTimeframes = [] } = usePairTimeframes(selectedPair || undefined);
+  const { data: selectedPairChangeStats } = useChangeStats(selectedPair || undefined, "1d");
 
   useEffect(() => {
     if (!selectedPair && tradingPairs && tradingPairs.length > 0) {
@@ -32,12 +34,12 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
 
   useEffect(() => {
     if (!selectedPair) return;
-    const enabledSet = new Set<string>(Array.isArray(pairTimeframes) ? pairTimeframes : []);
-    const nextState: Record<string, boolean> = {};
-    SUPPORTED_TIMEFRAMES.forEach((timeframe) => {
-      nextState[timeframe] = enabledSet.has(timeframe);
-    });
-    setSelectedTimeframes(nextState);
+    if (!Array.isArray(pairTimeframes)) {
+      setSelectedTimeframes([]);
+      return;
+    }
+    const valid = pairTimeframes.filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as typeof SUPPORTED_TIMEFRAMES[number]));
+    setSelectedTimeframes(valid);
   }, [pairTimeframes, selectedPair]);
 
   const sortedPairs = useMemo<TradingPair[]>(() => {
@@ -47,9 +49,9 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
 
   const saveTimeframesMutation = useMutation({
     mutationFn: async (data: { symbol: string; timeframes: string[] }) => {
-      await apiRequest('POST', '/api/pairs/timeframes', {
+      await apiRequest('PATCH', '/api/pairs/timeframes', {
         symbol: data.symbol,
-        timeframes: data.timeframes,
+        activeTimeframes: data.timeframes,
       });
     },
     onSuccess: (_data, variables) => {
@@ -71,22 +73,11 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     },
   });
 
-  const handleTimeframeChange = (timeframe: string, checked: boolean) => {
-    setSelectedTimeframes((prev) => ({
-      ...prev,
-      [timeframe]: checked,
-    }));
-  };
-
   const handleSaveTimeframes = () => {
     if (!selectedPair) return;
-    const enabledTimeframes = Object.entries(selectedTimeframes)
-      .filter(([_, enabled]) => enabled)
-      .map(([timeframe]) => timeframe);
-
     saveTimeframesMutation.mutate({
       symbol: selectedPair,
-      timeframes: enabledTimeframes,
+      timeframes: selectedTimeframes,
     });
   };
 
@@ -117,7 +108,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
     );
   }
 
-  const activeTimeframesCount = Object.values(selectedTimeframes).filter(Boolean).length;
+  const activeTimeframesCount = selectedTimeframes.length;
 
   return (
     <div className="p-6 space-y-6">
@@ -186,18 +177,22 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {SUPPORTED_TIMEFRAMES.map((timeframe) => (
-              <div key={timeframe} className="flex items-center space-x-3">
-                <Checkbox
-                  id={`timeframe-${timeframe}`}
-                  checked={selectedTimeframes[timeframe] || false}
-                  onCheckedChange={(checked) => handleTimeframeChange(timeframe, Boolean(checked))}
-                />
-                <label htmlFor={`timeframe-${timeframe}`} className="flex-1 text-sm">
+            <ToggleGroup
+              type="multiple"
+              value={selectedTimeframes}
+              onValueChange={(values) => setSelectedTimeframes(values as string[])}
+              className="flex flex-wrap gap-2"
+            >
+              {SUPPORTED_TIMEFRAMES.map((timeframe) => (
+                <ToggleGroupItem
+                  key={timeframe}
+                  value={timeframe}
+                  className="rounded-full border px-3 py-1 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                >
                   {timeframe}
-                </label>
-              </div>
-            ))}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
             <Button onClick={handleSaveTimeframes} disabled={saveTimeframesMutation.isPending}>
               {saveTimeframesMutation.isPending ? 'Saving...' : 'Save Configuration'}
             </Button>
@@ -217,7 +212,10 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
               if (!priceInfo) {
                 return <div className="text-sm text-muted-foreground">No market data available.</div>;
               }
-              const change = parseFloat(priceInfo.change24h ?? '0');
+              const change =
+                selectedPairChangeStats && !selectedPairChangeStats.partialData
+                  ? selectedPairChangeStats.changePct
+                  : parseFloat(priceInfo.change24h ?? '0');
               return (
                 <div className="space-y-2">
                   <div>

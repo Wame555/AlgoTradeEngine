@@ -1,3 +1,4 @@
+import Decimal from "decimal.js";
 import { pool } from "../db";
 import {
   getLastPrice as getCachedLastPrice,
@@ -114,13 +115,46 @@ async function fetchLastPriceFromDb(symbol: string): Promise<number> {
 async function fetchPrevCloseFromDb(symbol: string, timeframe: string): Promise<number> {
   try {
     const query =
-      'SELECT "close" FROM public."market_data" WHERE "symbol" = $1 AND "timeframe" = $2 ORDER BY "ts" DESC LIMIT 1;';
+      'SELECT "close", "ts" FROM public."market_data" WHERE "symbol" = $1 AND "timeframe" = $2 ORDER BY "ts" DESC LIMIT 48;';
     const result = await pool.query(query, [normalizeSymbol(symbol), timeframe]);
-    if (result.rowCount && result.rows[0]) {
-      const close = safeNumber(result.rows[0]?.close);
+    if (!result.rowCount || result.rows.length === 0) {
+      return 0;
+    }
+
+    const now = new Date();
+    const startOfUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const rows = result.rows;
+
+    if (timeframe === "1d") {
+      for (const row of rows) {
+        const ts = new Date(row.ts);
+        const close = safeNumber(row.close);
+        if (ts < startOfUtcDay && close > 0) {
+          return close;
+        }
+      }
+    }
+
+    for (const row of rows) {
+      const ts = new Date(row.ts);
+      const close = safeNumber(row.close);
+      if (ts <= cutoff && close > 0) {
+        return close;
+      }
+    }
+
+    if (rows.length > 1) {
+      const close = safeNumber(rows[1]?.close);
       if (close > 0) {
         return close;
       }
+    }
+
+    const latestClose = safeNumber(rows[0]?.close);
+    if (latestClose > 0) {
+      return latestClose;
     }
   } catch (error) {
     console.warn(
@@ -312,7 +346,10 @@ export async function getChangePct(symbol: string, timeframe: string): Promise<M
     return buildMetric(0, true);
   }
 
-  const change = ((last.value - prev.value) / prev.value) * 100;
+  const prevDecimal = new Decimal(prev.value);
+  const lastDecimal = new Decimal(last.value);
+  const changeDecimal = lastDecimal.minus(prevDecimal).div(prevDecimal).times(100);
+  const change = changeDecimal.toNumber();
   const partialData = prev.partialData || last.partialData;
   return buildMetric(change, partialData);
 }

@@ -1,6 +1,7 @@
 import type { Express, Response } from "express";
 import type { Broker } from "./broker/types";
 import type { DatabaseError } from "pg";
+import Decimal from "decimal.js";
 import { z, ZodError } from "zod";
 
 import { storage } from "./storage";
@@ -12,6 +13,7 @@ import { paperAccounts } from "@shared/schemaPaper";
 import {
   insertUserSettingsSchema,
   insertPositionSchema,
+  insertUserPairSettingsSchema,
   closedPositions,
   indicatorConfigs,
   positions,
@@ -34,7 +36,11 @@ import { resolveIndicatorType } from "./utils/indicatorConfigs";
 import { ensureUserSettingsGuard } from "./scripts/dbGuard";
 import * as statsController from "./controllers/stats";
 import { getLastPrice as getMetricsLastPrice } from "./services/metrics";
-import { type OpenPositionResponse, type StatsSummaryResponse } from "@shared/types";
+import {
+  SUPPORTED_TIMEFRAMES,
+  type OpenPositionResponse,
+  type StatsSummaryResponse,
+} from "@shared/types";
 
 const DEFAULT_SESSION_USERNAME = process.env.DEFAULT_USER ?? "demo";
 const DEFAULT_SESSION_PASSWORD = process.env.DEFAULT_USER_PASSWORD ?? "demo";
@@ -64,7 +70,13 @@ const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
   { type: "index", name: "idx_closed_positions_symbol_time", table: "closed_positions", columns: ["symbol", "closed_at"] },
   { type: "index", name: "idx_closed_positions_user", table: "closed_positions", columns: ["user_id"] },
   { type: "index", name: "idx_indicator_configs_user_name", table: "indicator_configs", columns: ["user_id", "name"] },
-  { type: "index", name: "pair_timeframes_symbol_timeframe_unique", table: "pair_timeframes", columns: ["symbol", "timeframe"], unique: true },
+  {
+    type: "index",
+    name: "user_pair_settings_user_symbol_uniq",
+    table: "user_pair_settings",
+    columns: ["user_id", "symbol"],
+    unique: true,
+  },
 ];
 
 function runUserSettingsGuard(): Promise<void> {
@@ -266,25 +278,75 @@ const indicatorConfigPayloadSchema = z.object({
   type: z.string().min(1).optional(),
 });
 
-const quickTradeSchema = insertPositionSchema
-  .extend({
-    size: insertPositionSchema.shape.size.optional(),
-    amountUsd: z.union([z.string(), z.number()]).optional(),
+const quickTradeRequestSchema = z
+  .object({
+    mode: z.enum(["QTY", "USDT"]),
+    symbol: z.string().min(1, "Symbol is required"),
+    side: z.enum(["LONG", "SHORT"]),
+    qty: z.union([z.string(), z.number()]).optional(),
+    usdtAmount: z.union([z.string(), z.number()]).optional(),
+    tpPrice: z.union([z.string(), z.number(), z.null()]).optional(),
+    slPrice: z.union([z.string(), z.number(), z.null()]).optional(),
+    leverage: z.union([z.string(), z.number()]).optional(),
   })
   .superRefine((data, ctx) => {
-    if (!data.size && !data.amountUsd) {
+    const qtyValue = data.qty != null ? Number(data.qty) : undefined;
+    const usdtValue = data.usdtAmount != null ? Number(data.usdtAmount) : undefined;
+
+    if (data.mode === "QTY") {
+      if (!qtyValue || !Number.isFinite(qtyValue) || qtyValue <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Quantity must be greater than zero",
+          path: ["qty"],
+        });
+      }
+    } else if (data.mode === "USDT") {
+      if (!usdtValue || !Number.isFinite(usdtValue) || usdtValue <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "USDT amount must be greater than zero",
+          path: ["usdtAmount"],
+        });
+      }
+    }
+
+    if (data.tpPrice != null && Number(data.tpPrice) <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide either position size or amount in USDT",
-        path: ["size"],
+        message: "Take profit must be greater than zero",
+        path: ["tpPrice"],
+      });
+    }
+    if (data.slPrice != null && Number(data.slPrice) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Stop loss must be greater than zero",
+        path: ["slPrice"],
       });
     }
   });
 
-const pairTimeframeRequestSchema = z.object({
-  symbol: z.string().min(1, "Symbol is required"),
-  timeframes: z.array(z.string().min(1)).max(12),
-});
+const pairTimeframePatchSchema = z
+  .object({
+    symbol: z.string().min(1, "Symbol is required"),
+    activeTimeframes: z
+      .array(z.string().min(1))
+      .max(SUPPORTED_TIMEFRAMES.length)
+      .default([]),
+  })
+  .superRefine((data, ctx) => {
+    const invalid = data.activeTimeframes.filter(
+      (tf) => !SUPPORTED_TIMEFRAMES.includes(tf as (typeof SUPPORTED_TIMEFRAMES)[number]),
+    );
+    if (invalid.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Unsupported timeframe(s): ${invalid.join(", ")}`,
+        path: ["activeTimeframes"],
+      });
+    }
+  });
 
 const accountPatchSchema = z
   .object({
@@ -531,6 +593,30 @@ export function registerRoutes(app: Express, deps: Deps): void {
     return Number.isFinite(parsed) ? parsed : undefined;
   };
 
+  const decimalOrNull = (value: unknown): Decimal | null => {
+    try {
+      if (value == null || value === "") {
+        return null;
+      }
+      const decimalValue = new Decimal(value as Decimal.Value);
+      if (!decimalValue.isFinite()) {
+        return null;
+      }
+      return decimalValue;
+    } catch {
+      return null;
+    }
+  };
+
+  const decimalOrZero = (value: unknown): Decimal => {
+    const resolved = decimalOrNull(value);
+    return resolved ?? new Decimal(0);
+  };
+
+  const formatDecimal = (value: Decimal, decimals: number): string => {
+    return value.toDecimalPlaces(decimals, Decimal.ROUND_DOWN).toFixed(decimals);
+  };
+
   const toDecimalString = (value: number, decimals: number = 8): string => {
     return Number.isFinite(value) ? value.toFixed(decimals) : (0).toFixed(decimals);
   };
@@ -570,6 +656,109 @@ export function registerRoutes(app: Express, deps: Deps): void {
       return Number.isFinite(computed) ? computed : 0;
     }
     return 0;
+  };
+
+  const computeOpenMetrics = async (
+    openPositionRows: Position[],
+  ): Promise<{ openPnL: Decimal; marginUsed: Decimal }> => {
+    if (!Array.isArray(openPositionRows) || openPositionRows.length === 0) {
+      return { openPnL: new Decimal(0), marginUsed: new Decimal(0) };
+    }
+
+    const symbolSet = new Set<string>();
+    for (const position of openPositionRows) {
+      if (position?.symbol) {
+        symbolSet.add(String(position.symbol).toUpperCase());
+      }
+    }
+
+    const priceEntries = await Promise.all(
+      Array.from(symbolSet).map(async (symbol) => {
+        try {
+          const metric = await getMetricsLastPrice(symbol);
+          const price = decimalOrNull(metric.value);
+          return [symbol, price?.gt(0) ? price : null] as const;
+        } catch (error) {
+          console.warn(
+            `[stats] failed to resolve last price for ${symbol}: ${(error as Error).message ?? error}`,
+          );
+          return [symbol, null] as const;
+        }
+      }),
+    );
+
+    const priceMap = new Map<string, Decimal>();
+    for (const [symbol, price] of priceEntries) {
+      if (price) {
+        priceMap.set(symbol, price);
+      }
+    }
+
+    let openPnL = new Decimal(0);
+    let marginUsed = new Decimal(0);
+
+    for (const position of openPositionRows) {
+      const entryPrice = decimalOrNull(position.entryPrice);
+      if (!entryPrice || !entryPrice.isFinite() || entryPrice.lte(0)) {
+        continue;
+      }
+
+      let qty = decimalOrNull(position.qty);
+      if (!qty || qty.lte(0)) {
+        const amountUsd = decimalOrNull(position.amountUsd ?? position.size);
+        if (amountUsd && amountUsd.gt(0)) {
+          try {
+            qty = amountUsd.div(entryPrice);
+          } catch {
+            qty = null;
+          }
+        }
+      }
+
+      if (!qty || !qty.isFinite() || qty.lte(0)) {
+        continue;
+      }
+
+      const normalizedSymbol = String(position.symbol ?? "").toUpperCase();
+      const markPrice = priceMap.get(normalizedSymbol);
+      const fallbackPrice = decimalOrNull(position.currentPrice) ?? entryPrice;
+      const price = markPrice && markPrice.gt(0) ? markPrice : fallbackPrice;
+      if (!price || !price.isFinite() || price.lte(0)) {
+        continue;
+      }
+
+      const side = String(position.side ?? "").toUpperCase();
+      let positionPnl = new Decimal(0);
+      if (side === "LONG") {
+        positionPnl = price.minus(entryPrice).times(qty);
+      } else if (side === "SHORT") {
+        positionPnl = entryPrice.minus(price).times(qty);
+      }
+
+      if (positionPnl.isFinite()) {
+        openPnL = openPnL.plus(positionPnl);
+      }
+
+      const amountUsd = decimalOrNull(position.amountUsd ?? position.size);
+      if (amountUsd && amountUsd.isFinite() && amountUsd.gt(0)) {
+        marginUsed = marginUsed.plus(amountUsd);
+      } else {
+        marginUsed = marginUsed.plus(entryPrice.times(qty));
+      }
+    }
+
+    return { openPnL, marginUsed };
+  };
+
+  const computeEquitySnapshot = async (
+    settings: UserSettings,
+    openPositionRows?: Position[],
+  ): Promise<{ totalBalance: Decimal; openPnL: Decimal; equity: Decimal }> => {
+    const totalBalance = decimalOrZero(settings.totalBalance ?? 0).toDecimalPlaces(2);
+    const positionsList = openPositionRows ?? (await storage.getAllOpenPositions());
+    const { openPnL } = await computeOpenMetrics(positionsList);
+    const equity = totalBalance.plus(openPnL);
+    return { totalBalance, openPnL, equity };
   };
 
   const computeDefaultTargets = (
@@ -996,12 +1185,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/settings/account", async (_req, res) => {
     try {
       const { settings } = await ensureDefaultUser();
-      const totalBalanceValue = Number(settings.totalBalance ?? 0);
-      let totalBalance = Number.isFinite(totalBalanceValue) ? totalBalanceValue : 0;
       const snapshot = getAccountSnapshot();
+      let totalBalanceDecimal = decimalOrZero(settings.totalBalance ?? 0);
       if (snapshot && Number.isFinite(snapshot.totalBalance)) {
-        totalBalance = snapshot.totalBalance;
+        totalBalanceDecimal = decimalOrZero(snapshot.totalBalance);
       }
+      const totalBalance = totalBalanceDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
       res.json({ totalBalance });
     } catch (error) {
       respondWithError(res, "GET /api/settings/account", error, "Failed to fetch account settings");
@@ -1072,11 +1261,11 @@ export function registerRoutes(app: Express, deps: Deps): void {
       }
 
       if (patch.totalBalance != null) {
-        const value = Number(patch.totalBalance);
-        if (!Number.isFinite(value) || value < 0) {
+        const valueDecimal = decimalOrNull(patch.totalBalance);
+        if (!valueDecimal || valueDecimal.lt(0)) {
           return res.status(400).json({ message: "Total balance must be a non-negative number" });
         }
-        base.totalBalance = value.toFixed(2);
+        base.totalBalance = valueDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2);
       }
 
       if (base.totalBalance == null && existing?.totalBalance != null) {
@@ -1086,8 +1275,10 @@ export function registerRoutes(app: Express, deps: Deps): void {
       base.userId = user.id;
 
       const result = await storage.upsertUserSettings(base);
-      const responseBalance = Number(result.totalBalance ?? base.totalBalance ?? 0);
-      const normalizedBalance = Number.isFinite(responseBalance) ? responseBalance : 0;
+      const responseBalanceDecimal = decimalOrZero(result.totalBalance ?? base.totalBalance ?? 0);
+      const normalizedBalance = responseBalanceDecimal
+        .toDecimalPlaces(2, Decimal.ROUND_DOWN)
+        .toNumber();
       updateAccountSnapshot({ totalBalance: normalizedBalance });
       res.json({ totalBalance: normalizedBalance });
     } catch (error) {
@@ -1129,50 +1320,89 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.post("/api/positions", async (req, res) => {
     try {
-      const payload = quickTradeSchema.parse(req.body ?? {});
-      const request = { ...payload } as any;
-      const amountUsdValue = request.amountUsd != null ? Number(request.amountUsd) : undefined;
+      const payload = quickTradeRequestSchema.parse(req.body ?? {});
+      const symbol = payload.symbol.toUpperCase();
+      const side = payload.side;
+      const mode = payload.mode;
 
-      if (!request.size && request.amountUsd) {
-        const amountUsd = Number(request.amountUsd);
-        const lastPrice = getPaperLastPrice(request.symbol);
-        if (!lastPrice) {
-          void telegramService.sendNotification(
-            "❌ Failed to open position: No market price available for the selected symbol",
-          );
-          return res.status(400).json({ message: "No market price available for the selected symbol" });
+      const { user, settings } = await ensureDefaultUser();
+
+      const lastPrice = getPaperLastPrice(symbol);
+      const hasLivePrice = Number.isFinite(lastPrice) && typeof lastPrice === "number" && lastPrice > 0;
+
+      if (!hasLivePrice) {
+        void telegramService.sendNotification(
+          "❌ Failed to open position: No market price available for the selected symbol",
+        );
+        return res.status(400).json({ message: "No market price available for the selected symbol" });
+      }
+
+      const priceDecimal = new Decimal(lastPrice as number);
+      let qtyDecimal: Decimal | null = null;
+      let amountUsdDecimal: Decimal | null = null;
+
+      if (mode === "QTY") {
+        qtyDecimal = decimalOrNull(payload.qty);
+        if (!qtyDecimal || qtyDecimal.lte(0)) {
+          return res.status(400).json({ message: "Quantity must be greater than zero" });
+        }
+        amountUsdDecimal = qtyDecimal.times(priceDecimal);
+      } else {
+        amountUsdDecimal = decimalOrNull(payload.usdtAmount);
+        if (!amountUsdDecimal || amountUsdDecimal.lte(0)) {
+          return res.status(400).json({ message: "USDT amount must be greater than zero" });
         }
 
-        const tradingPair = await storage.getTradingPair(request.symbol);
-        const filters = await binanceService.getSymbolFilters(request.symbol);
+        const tradingPair = await storage.getTradingPair(symbol);
+        const filters = await binanceService.getSymbolFilters(symbol);
         const stepSize = filters?.stepSize ?? (tradingPair?.stepSize ? Number(tradingPair.stepSize) : undefined);
         const minQty = filters?.minQty ?? (tradingPair?.minQty ? Number(tradingPair.minQty) : undefined);
         const minNotional =
           filters?.minNotional ?? (tradingPair?.minNotional ? Number(tradingPair.minNotional) : undefined);
 
-        const quantityResult = calculateQuantityFromUsd(amountUsd, lastPrice, {
-          stepSize,
-          minQty,
-          minNotional,
-        });
-        request.size = quantityResult.quantity.toFixed(8);
+        try {
+          const quantityResult = calculateQuantityFromUsd(
+            amountUsdDecimal.toNumber(),
+            priceDecimal.toNumber(),
+            {
+              stepSize,
+              minQty,
+              minNotional,
+            },
+          );
+          qtyDecimal = new Decimal(quantityResult.quantity);
+          amountUsdDecimal = qtyDecimal.times(priceDecimal);
+        } catch (error) {
+          if (error instanceof QuantityValidationError) {
+            return res.status(400).json({ message: error.message });
+          }
+          return res.status(400).json({ message: "Failed to calculate order quantity" });
+        }
       }
 
-      if (!request.size) {
-        void telegramService.sendNotification("❌ Failed to open position: Position size could not be determined");
+      if (!qtyDecimal || qtyDecimal.lte(0)) {
         return res.status(400).json({ message: "Position size could not be determined" });
       }
 
-      const parsedPosition = insertPositionSchema.parse({
-        ...request,
-        entryPrice: request.entryPrice ?? "0",
-      });
+      const requiredNotional = amountUsdDecimal ?? qtyDecimal.times(priceDecimal);
 
-      const side = parsedPosition.side === "LONG" ? "BUY" : "SELL";
-      const orderQty = Number(parsedPosition.size ?? 0);
+      const openPositions = await storage.getAllOpenPositions();
+      const { equity } = await computeEquitySnapshot(settings, openPositions);
+
+      if (requiredNotional.gt(equity)) {
+        return res.status(400).json({ code: "INSUFFICIENT_EQUITY", message: "Insufficient equity" });
+      }
+
+      const qtyStr = formatDecimal(qtyDecimal, 8);
+      const orderQty = Number(qtyStr);
+      if (!Number.isFinite(orderQty) || orderQty <= 0) {
+        return res.status(400).json({ message: "Order quantity is invalid" });
+      }
+
+      const brokerSide = side === "LONG" ? "BUY" : "SELL";
       const order = await broker.placeOrder({
-        symbol: parsedPosition.symbol,
-        side,
+        symbol,
+        side: brokerSide,
         type: "MARKET",
         qty: orderQty,
       });
@@ -1182,42 +1412,74 @@ export function registerRoutes(app: Express, deps: Deps): void {
         return res.status(400).json({ message: "Failed to execute trade" });
       }
 
-      const entryFill = order.fills?.[0]?.price;
-      const entryPrice = entryFill != null ? entryFill.toString() : parsedPosition.entryPrice;
-      const userSettings = await storage.getUserSettings(parsedPosition.userId);
-      const defaults = computeDefaultTargets(parsedPosition.side as "LONG" | "SHORT", Number(entryPrice), userSettings);
+      const entryFill = decimalOrNull(order.fills?.[0]?.price) ?? priceDecimal;
+      const executedAmountUsd = qtyDecimal.times(entryFill);
+      const amountUsdStr = formatDecimal(executedAmountUsd, 2);
+      const entryPriceStr = formatDecimal(entryFill, 8);
 
-      const entryPriceNumber = Number(entryPrice);
-      const qtyNumber = Number.isFinite(orderQty) ? orderQty : 0;
-      const qtyStr = Number.isFinite(qtyNumber) ? qtyNumber.toFixed(8) : toDecimalString(0);
-      let sizeUsdNumber = Number.isFinite(amountUsdValue ?? NaN) ? (amountUsdValue as number) : undefined;
-      if (!Number.isFinite(sizeUsdNumber ?? NaN) && Number.isFinite(entryPriceNumber) && qtyNumber > 0) {
-        sizeUsdNumber = entryPriceNumber * qtyNumber;
+      const leverageDecimal = decimalOrNull(payload.leverage ?? settings.defaultLeverage ?? 1);
+      const leverageStr = leverageDecimal ? formatDecimal(leverageDecimal, 2) : undefined;
+
+      const defaults = computeDefaultTargets(side, entryFill.toNumber(), settings);
+
+      const providedTp = payload.tpPrice === null ? null : decimalOrNull(payload.tpPrice);
+      const providedSl = payload.slPrice === null ? null : decimalOrNull(payload.slPrice);
+
+      if (
+        providedTp &&
+        ((side === "LONG" && providedTp.lte(entryFill)) || (side === "SHORT" && providedTp.gte(entryFill)))
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Take profit must be beyond the entry price for the selected side" });
       }
-      const sizeUsdStr = Number.isFinite(sizeUsdNumber ?? NaN)
-        ? (sizeUsdNumber as number).toFixed(8)
-        : toDecimalString(0);
-      const stopLossPrice = parsedPosition.stopLoss ?? defaults.stopLoss ?? undefined;
-      const takeProfitPrice = parsedPosition.takeProfit ?? defaults.takeProfit ?? undefined;
 
-      const positionToSave: typeof parsedPosition = {
-        ...parsedPosition,
-        orderId: order.orderId,
-        entryPrice,
-        currentPrice: entryPrice,
-        size: sizeUsdStr,
+      if (
+        providedSl &&
+        ((side === "LONG" && providedSl.gte(entryFill)) || (side === "SHORT" && providedSl.lte(entryFill)))
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Stop loss must be beyond the entry price for the selected side" });
+      }
+
+      const takeProfitPrice =
+        providedTp === null
+          ? undefined
+          : providedTp
+          ? formatDecimal(providedTp, 8)
+          : defaults.takeProfit ?? undefined;
+      const stopLossPrice =
+        providedSl === null
+          ? undefined
+          : providedSl
+          ? formatDecimal(providedSl, 8)
+          : defaults.stopLoss ?? undefined;
+
+      const positionToSave = insertPositionSchema.parse({
+        userId: user.id,
+        symbol,
+        side,
+        entryPrice: entryPriceStr,
+        currentPrice: entryPriceStr,
+        size: amountUsdStr,
         qty: qtyStr,
-        amountUsd: sizeUsdStr,
-        stopLoss: stopLossPrice ?? undefined,
-        takeProfit: takeProfitPrice ?? undefined,
-        slPrice: stopLossPrice ?? undefined,
-        tpPrice: takeProfitPrice ?? undefined,
-      };
+        amountUsd: amountUsdStr,
+        leverage: leverageStr,
+        takeProfit: takeProfitPrice,
+        stopLoss: stopLossPrice,
+        tpPrice: takeProfitPrice,
+        slPrice: stopLossPrice,
+        status: "OPEN",
+      });
 
-      const result = await storage.createPosition(positionToSave);
+      const result = await storage.createPosition({
+        ...positionToSave,
+        orderId: order.orderId,
+      });
 
       clearCacheKey("positions:open");
-      clearCacheKey(`positions:open:${parsedPosition.userId}`);
+      clearCacheKey(`positions:open:${user.id}`);
 
       console.info(
         `[trade] opened ${result.symbol} ${result.side} qty=${result.qty ?? result.size} entry=${result.entryPrice}`,
@@ -1487,94 +1749,22 @@ export function registerRoutes(app: Express, deps: Deps): void {
         .filter((row) => row.closedAt && new Date(row.closedAt) >= cutoff24h)
         .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
-      const balanceRow = accountRows[0];
-      const fallbackBalance = parseNumeric(balanceRow?.balance);
       const snapshot = getAccountSnapshot();
-      const snapshotBalance = snapshot?.totalBalance;
-      let balance = Number.isFinite(fallbackBalance ?? NaN) ? (fallbackBalance as number) : 0;
-      if (Number.isFinite(snapshotBalance)) {
-        balance = snapshotBalance as number;
-      } else if (Number.isFinite(totalBalanceSetting)) {
-        balance = totalBalanceSetting;
+      const fallbackBalance = parseNumeric(accountRows[0]?.balance);
+      let totalBalanceDecimal = decimalOrZero(totalBalanceSetting);
+      if (snapshot && Number.isFinite(snapshot.totalBalance)) {
+        totalBalanceDecimal = decimalOrZero(snapshot.totalBalance).toDecimalPlaces(2);
+      } else if (Number.isFinite(fallbackBalance ?? NaN)) {
+        totalBalanceDecimal = decimalOrZero(fallbackBalance as number).toDecimalPlaces(2);
       }
 
-      let openPnL = 0;
-      let marginUsed = 0;
-      if (openPositionRows.length > 0) {
-        const symbolSet = new Set<string>();
-        openPositionRows.forEach((position) => {
-          if (position.symbol) {
-            symbolSet.add(String(position.symbol).toUpperCase());
-          }
-        });
+      const { openPnL: openPnLDecimal } = await computeOpenMetrics(openPositionRows);
+      const sanitizedOpenPnL = openPnLDecimal.isFinite() ? openPnLDecimal : new Decimal(0);
+      const equityDecimal = totalBalanceDecimal.plus(sanitizedOpenPnL);
 
-        const priceEntries = await Promise.all(
-          Array.from(symbolSet).map(async (symbol) => {
-            try {
-              const metric = await getMetricsLastPrice(symbol);
-              const price = Number.isFinite(metric.value) && metric.value > 0 ? metric.value : undefined;
-              return [symbol, price] as const;
-            } catch (error) {
-              console.warn(
-                `[stats] failed to resolve last price for ${symbol}: ${(error as Error).message ?? error}`,
-              );
-              return [symbol, undefined] as const;
-            }
-          }),
-        );
-
-        const priceMap = new Map<string, number>();
-        for (const [symbol, price] of priceEntries) {
-          if (price != null) {
-            priceMap.set(symbol, price);
-          }
-        }
-
-        for (const position of openPositionRows) {
-          const entry = parseNumeric(position.entryPrice) ?? 0;
-          const qty = resolveQty(position);
-          if (!Number.isFinite(entry) || entry <= 0 || qty <= 0) {
-            continue;
-          }
-
-          const normalizedSymbol = String(position.symbol ?? "").toUpperCase();
-          const markPrice = priceMap.get(normalizedSymbol);
-          const fallbackPrice = parseNumeric(position.currentPrice) ?? entry;
-          const price = Number.isFinite(markPrice ?? NaN) && (markPrice as number) > 0 ? (markPrice as number) : fallbackPrice;
-
-          const side = String(position.side ?? "").toUpperCase();
-          let positionPnl = 0;
-          if (side === "LONG") {
-            positionPnl = (price - entry) * qty;
-          } else if (side === "SHORT") {
-            positionPnl = (entry - price) * qty;
-          }
-
-          if (Number.isFinite(positionPnl)) {
-            openPnL += positionPnl;
-          }
-
-          const amountUsd = parseNumeric(position.amountUsd);
-          if (Number.isFinite(amountUsd) && (amountUsd as number) > 0) {
-            marginUsed += amountUsd as number;
-          } else {
-            const notional = entry * qty;
-            if (Number.isFinite(notional) && notional > 0) {
-              marginUsed += notional;
-            }
-          }
-        }
-      }
-
-      if (!Number.isFinite(openPnL)) {
-        openPnL = 0;
-      }
-
-      if (!Number.isFinite(marginUsed)) {
-        marginUsed = 0;
-      }
-
-      const equity = balance - marginUsed + openPnL;
+      const balance = totalBalanceDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
+      const openPnL = sanitizedOpenPnL.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
+      const equity = equityDecimal.toDecimalPlaces(2, Decimal.ROUND_DOWN).toNumber();
 
       const payload: StatsSummaryResponse = {
         totalTrades,
@@ -1640,15 +1830,16 @@ export function registerRoutes(app: Express, deps: Deps): void {
     try {
       const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
 
+      const { user } = await ensureDefaultUser();
       const [pairs, pairTimeframesRows] = await Promise.all([
         storage.getAllTradingPairs(),
-        storage.getPairTimeframes(),
+        storage.getUserPairSettings(user.id),
       ]);
 
       const timeframeMap = new Map<string, string[]>();
       pairTimeframesRows.forEach((row) => {
         const list = timeframeMap.get(row.symbol) ?? [];
-        list.push(row.timeframe);
+        row.activeTimeframes?.forEach((tf) => list.push(tf));
         timeframeMap.set(row.symbol, list);
       });
 
@@ -1677,11 +1868,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const { symbol } = req.params;
       const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
 
-      const pairTimeframesRows = await storage.getPairTimeframes(symbol);
+      const { user } = await ensureDefaultUser();
+      const pairTimeframesRows = await storage.getUserPairSettings(user.id, symbol);
       const timeframeMap = new Map<string, string[]>();
       pairTimeframesRows.forEach((row) => {
         const list = timeframeMap.get(row.symbol) ?? [];
-        list.push(row.timeframe);
+        row.activeTimeframes?.forEach((tf) => list.push(tf));
         timeframeMap.set(row.symbol, list);
       });
 
@@ -1704,21 +1896,48 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.get("/api/pairs/timeframes", async (req, res) => {
     try {
-      const symbol = req.query.symbol ? String(req.query.symbol) : undefined;
-      const rows = await storage.getPairTimeframes(symbol);
-      res.json(rows);
+      const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+      const { user } = await ensureDefaultUser();
+      if (symbol) {
+        const rows = await storage.getUserPairSettings(user.id, symbol);
+        const activeTimeframes = rows[0]?.activeTimeframes ?? [];
+        return res.json({ symbol, activeTimeframes });
+      }
+
+      const rows = await storage.getUserPairSettings(user.id);
+      res.json(
+        rows.map((row) => ({
+          symbol: row.symbol,
+          activeTimeframes: row.activeTimeframes ?? [],
+        })),
+      );
     } catch (error) {
       respondWithError(res, "GET /api/pairs/timeframes", error, "Failed to fetch pair timeframes");
     }
   });
 
-  app.post("/api/pairs/timeframes", async (req, res) => {
+  app.patch("/api/pairs/timeframes", async (req, res) => {
     try {
-      const payload = pairTimeframeRequestSchema.parse(req.body ?? {});
-      const rows = await storage.replacePairTimeframes(payload.symbol, payload.timeframes);
-      res.json(rows);
+      const payload = pairTimeframePatchSchema.parse(req.body ?? {});
+      const { user } = await ensureDefaultUser();
+      const symbol = payload.symbol.toUpperCase();
+      const activeTimeframes = Array.from(
+        new Set(
+          (payload.activeTimeframes ?? [])
+            .map((tf) => tf.trim())
+            .filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as (typeof SUPPORTED_TIMEFRAMES)[number])),
+        ),
+      );
+
+      const result = await storage.upsertUserPairSettings({
+        userId: user.id,
+        symbol,
+        activeTimeframes,
+      });
+
+      res.json({ symbol: result.symbol, activeTimeframes: result.activeTimeframes ?? [] });
     } catch (error) {
-      respondWithError(res, "POST /api/pairs/timeframes", error, "Failed to save pair timeframes");
+      respondWithError(res, "PATCH /api/pairs/timeframes", error, "Failed to save pair timeframes");
     }
   });
 
