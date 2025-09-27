@@ -226,6 +226,22 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const tradingDisabled = availablePairs.length === 0 || !userId;
   const mode = form.watch('mode');
 
+  useEffect(() => {
+    if (mode === 'USDT') {
+      form.setValue('size', '');
+      const currentAmount = form.getValues('amountUsd');
+      if (!currentAmount) {
+        form.setValue('amountUsd', '100');
+      }
+    } else {
+      form.setValue('amountUsd', '');
+      const currentSize = form.getValues('size');
+      if (!currentSize) {
+        form.setValue('size', '0.01');
+      }
+    }
+  }, [mode, form]);
+
   return (
     <Card>
       <CardHeader>
@@ -284,6 +300,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
             {mode === 'QTY' ? (
               <FormField
+                key="qty-field"
                 control={form.control}
                 name="size"
                 render={({ field }) => (
@@ -292,6 +309,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     <FormControl>
                       <Input
                         placeholder="0.01"
+                        type="number"
+                        step="0.00000001"
+                        inputMode="decimal"
                         {...field}
                         data-testid="input-size"
                       />
@@ -302,6 +322,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
               />
             ) : (
               <FormField
+                key="amount-field"
                 control={form.control}
                 name="amountUsd"
                 render={({ field }) => (
@@ -310,6 +331,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     <FormControl>
                       <Input
                         placeholder="100"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
                         {...field}
                         data-testid="input-amount-usd"
                       />

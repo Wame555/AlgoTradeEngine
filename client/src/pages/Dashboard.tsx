@@ -21,6 +21,7 @@ export default function Dashboard({ priceData }: DashboardProps) {
   const winRate = statsSummary?.winRate ?? 0;
   const totalTrades = statsSummary?.totalTrades ?? 0;
   const totalPnl = statsSummary?.totalPnl ?? 0;
+  const dailyPnl = statsSummary?.dailyPnl ?? 0;
   const last30dPnl = statsSummary?.last30dPnl ?? 0;
   const avgRR = statsSummary?.avgRR ?? 0;
 
@@ -36,6 +37,7 @@ export default function Dashboard({ priceData }: DashboardProps) {
   };
 
   const formattedTotalPnl = formatCurrency(totalPnl);
+  const formattedDailyPnl = formatCurrency(dailyPnl);
   const formatted30dPnl = formatCurrency(last30dPnl);
 
   return (
@@ -94,6 +96,9 @@ export default function Dashboard({ priceData }: DashboardProps) {
                   data-testid="stat-total-pnl"
                 >
                   {formattedTotalPnl}
+                </p>
+                <p className="text-xs text-muted-foreground" data-testid="stat-24h-pnl">
+                  24h: {formattedDailyPnl}
                 </p>
                 <p className="text-xs text-muted-foreground" data-testid="stat-30d-pnl">
                   Last 30d: {formatted30dPnl}

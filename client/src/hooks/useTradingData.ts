@@ -58,6 +58,7 @@ export function useStatsSummary() {
     winRate: 0,
     avgRR: 0,
     totalPnl: 0,
+    dailyPnl: 0,
     last30dPnl: 0,
     balance: 0,
     equity: 0,

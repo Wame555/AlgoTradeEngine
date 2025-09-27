@@ -1419,11 +1419,12 @@ export function registerRoutes(app: Express, deps: Deps): void {
   });
 
   app.get("/api/stats/summary", async (_req, res) => {
-    const fallback: StatsSummaryResponse = {
+  const fallback: StatsSummaryResponse = {
       totalTrades: 0,
       winRate: 0,
       avgRR: 0,
       totalPnl: 0,
+      dailyPnl: 0,
       last30dPnl: 0,
       balance: 0,
       equity: 0,
@@ -1481,11 +1482,24 @@ export function registerRoutes(app: Express, deps: Deps): void {
         .filter((row) => row.closedAt && new Date(row.closedAt) >= cutoff)
         .reduce((sum, row) => sum + row.computedPnlUsd, 0);
 
+      const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const dailyPnl = closedWithPnl
+        .filter((row) => row.closedAt && new Date(row.closedAt) >= cutoff24h)
+        .reduce((sum, row) => sum + row.computedPnlUsd, 0);
+
       const balanceRow = accountRows[0];
-      const fallbackBalance = parseNumeric(balanceRow?.balance) ?? 0;
-      const balance = Number.isFinite(totalBalanceSetting) ? totalBalanceSetting : fallbackBalance;
+      const fallbackBalance = parseNumeric(balanceRow?.balance);
+      const snapshot = getAccountSnapshot();
+      const snapshotBalance = snapshot?.totalBalance;
+      let balance = Number.isFinite(fallbackBalance ?? NaN) ? (fallbackBalance as number) : 0;
+      if (Number.isFinite(snapshotBalance)) {
+        balance = snapshotBalance as number;
+      } else if (Number.isFinite(totalBalanceSetting)) {
+        balance = totalBalanceSetting;
+      }
 
       let openPnL = 0;
+      let marginUsed = 0;
       if (openPositionRows.length > 0) {
         const symbolSet = new Set<string>();
         openPositionRows.forEach((position) => {
@@ -1539,6 +1553,16 @@ export function registerRoutes(app: Express, deps: Deps): void {
           if (Number.isFinite(positionPnl)) {
             openPnL += positionPnl;
           }
+
+          const amountUsd = parseNumeric(position.amountUsd);
+          if (Number.isFinite(amountUsd) && (amountUsd as number) > 0) {
+            marginUsed += amountUsd as number;
+          } else {
+            const notional = entry * qty;
+            if (Number.isFinite(notional) && notional > 0) {
+              marginUsed += notional;
+            }
+          }
         }
       }
 
@@ -1546,13 +1570,18 @@ export function registerRoutes(app: Express, deps: Deps): void {
         openPnL = 0;
       }
 
-      const equity = balance + openPnL;
+      if (!Number.isFinite(marginUsed)) {
+        marginUsed = 0;
+      }
+
+      const equity = balance - marginUsed + openPnL;
 
       const payload: StatsSummaryResponse = {
         totalTrades,
         winRate,
         avgRR: Number.isFinite(avgReward) ? avgReward : 0,
         totalPnl,
+        dailyPnl,
         last30dPnl,
         balance,
         equity,

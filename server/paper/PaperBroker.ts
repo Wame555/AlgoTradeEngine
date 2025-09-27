@@ -31,10 +31,23 @@ export class PaperBroker implements Broker {
         const a = await this.accountRow();
         const pos = await db.select().from(paperPositions);
         const equityAdj = await this.markToMarket(pos);
-        const marginUsed = 0; // egyszerstve
+        let marginUsed = 0;
+        for (const row of pos) {
+            const qty = Number(row.qty);
+            const avg = Number(row.avgPrice);
+            if (!Number.isFinite(qty) || !Number.isFinite(avg)) {
+                continue;
+            }
+            const used = Math.abs(qty) * Math.max(avg, 0);
+            if (Number.isFinite(used)) {
+                marginUsed += used;
+            }
+        }
+        const balance = Number(a.balance);
+        const equity = balance - marginUsed + equityAdj;
         return {
-            balance: Number(a.balance),
-            equity: Number(a.balance) + equityAdj,
+            balance,
+            equity,
             marginUsed,
         };
     }
@@ -80,34 +93,71 @@ export class PaperBroker implements Broker {
             .where(eq(paperPositions.symbol, req.symbol))
             .limit(1);
 
-        if (!pos || Number(pos.qty) === 0) {
+        let realizedPnl = 0;
+        let newQtyValue = signed * qty;
+        let newAvgPrice = fillPrice;
+
+        if (!pos || Math.abs(Number(pos.qty)) === 0) {
             await db.insert(paperPositions).values({
                 symbol: req.symbol,
-                qty: (signed * qty).toString(),
-                avgPrice: fillPrice.toString(),
+                qty: newQtyValue.toFixed(8),
+                avgPrice: fillPrice.toFixed(8),
             });
         } else {
             const oldQty = Number(pos.qty);
-            const newQty = oldQty + signed * qty;
+            const entryPrice = Number(pos.avgPrice);
+            const fillQty = signed * qty;
+            const combinedQty = oldQty + fillQty;
+            const sameDirection = oldQty === 0 || oldQty * fillQty >= 0;
 
-            const avg =
-                newQty === 0
-                    ? 0
-                    : (oldQty * Number(pos.avgPrice) + signed * qty * fillPrice) / newQty;
+            if (sameDirection) {
+                const numerator = oldQty * entryPrice + fillQty * fillPrice;
+                newQtyValue = combinedQty;
+                newAvgPrice = combinedQty === 0 ? 0 : numerator / combinedQty;
+            } else {
+                const oldAbs = Math.abs(oldQty);
+                const fillAbs = Math.abs(fillQty);
+                const closeQty = Math.min(oldAbs, fillAbs);
+                if (closeQty > 0 && Number.isFinite(entryPrice)) {
+                    const pnlPerUnit = oldQty > 0 ? fillPrice - entryPrice : entryPrice - fillPrice;
+                    realizedPnl += pnlPerUnit * closeQty;
+                }
+
+                newQtyValue = combinedQty;
+                if (Math.abs(newQtyValue) < 1e-8) {
+                    newQtyValue = 0;
+                    newAvgPrice = 0;
+                } else if (fillAbs > oldAbs) {
+                    newAvgPrice = fillPrice;
+                } else {
+                    newAvgPrice = entryPrice;
+                }
+            }
 
             await db
                 .update(paperPositions)
-                .set({ qty: newQty.toString(), avgPrice: avg.toString(), updatedAt: new Date() })
+                .set({
+                    qty: newQtyValue.toFixed(8),
+                    avgPrice: newAvgPrice.toFixed(8),
+                    updatedAt: new Date(),
+                })
                 .where(eq(paperPositions.symbol, req.symbol));
         }
 
-        // balance  egyszer cash elszmols
-        const newBalance = Number(a.balance) - notional * signed - fee;
+        // balance  egyszer cash elszmols csak realizlt pnl + dj
+        const newBalance = Number(a.balance) + realizedPnl - fee;
         await db
             .update(paperAccounts)
-            .set({ balance: newBalance.toString() })
+            .set({ balance: newBalance.toFixed(8) })
             .where(eq(paperAccounts.id, a.id));
-        updateAccountSnapshot({ totalBalance: newBalance });
+
+        const accountState = await this.account();
+        const openPnL = accountState.equity - accountState.balance + accountState.marginUsed;
+        updateAccountSnapshot({
+            totalBalance: accountState.balance,
+            equity: accountState.equity,
+            openPnL,
+        });
 
         // order + trade ments
         const [ord] = await db
