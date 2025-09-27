@@ -27,7 +27,11 @@ import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradi
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
-import { get24hChangeForSymbols, resolveSymbolsForMarketChange } from "./services/market24h";
+import {
+  get24hChangeForSymbols,
+  listSymbolsWithStatus,
+  resolveSymbolsForMarketChange,
+} from "./services/market24h";
 import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
 import { startRiskWatcher } from "./services/riskWatcher";
 import { getAccountSnapshot, updateAccountSnapshot } from "./state/accountSnapshot";
@@ -80,7 +84,7 @@ const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
   },
 ];
 
-const SUPPORTED_TIMEFRAME_SET = new Set<string>(SUPPORTED_TIMEFRAMES);
+const SUP = new Set(SUPPORTED_TIMEFRAMES);
 
 function runUserSettingsGuard(): Promise<void> {
   if (!userSettingsGuardPromise) {
@@ -330,23 +334,9 @@ const quickTradeRequestSchema = z
     }
   });
 
-const pairSettingsPayloadSchema = z
-  .object({
-    activeTimeframes: z.array(z.string()).optional().nullable(),
-  })
-  .superRefine((data, ctx) => {
-    const values = Array.isArray(data.activeTimeframes) ? data.activeTimeframes : [];
-    const invalid = values
-      .map((value) => value?.toString().trim())
-      .filter((value): value is string => Boolean(value) && !SUPPORTED_TIMEFRAME_SET.has(value));
-    if (invalid.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Unsupported timeframe(s): ${invalid.join(", ")}`,
-        path: ["activeTimeframes"],
-      });
-    }
-  });
+const pairSettingsPayloadSchema = z.object({
+  activeTimeframes: z.array(z.string()).optional().nullable(),
+});
 
 function normalizeActiveTimeframes(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -354,12 +344,8 @@ function normalizeActiveTimeframes(value: unknown): string[] {
   }
   const result = new Set<string>();
   for (const raw of value) {
-    if (typeof raw !== "string") {
-      continue;
-    }
-    const trimmed = raw.trim();
-    if (trimmed && SUPPORTED_TIMEFRAME_SET.has(trimmed)) {
-      result.add(trimmed);
+    if (typeof raw === "string" && SUP.has(raw)) {
+      result.add(raw);
     }
   }
   return Array.from(result);
@@ -1160,6 +1146,15 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
+  app.get("/api/symbols", async (_req, res) => {
+    try {
+      const items = await listSymbolsWithStatus();
+      res.json({ items });
+    } catch (error) {
+      respondWithError(res, "GET /api/symbols", error, "Failed to fetch symbols");
+    }
+  });
+
   app.get("/api/pairs", async (_req, res) => {
     try {
       const pairs = await storage.getAllTradingPairs();
@@ -1191,9 +1186,19 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
   app.get("/api/market/24h", async (req, res) => {
     try {
-      const symbolsParam = typeof req.query.symbols === "string" ? req.query.symbols : undefined;
-      const requestedSymbols = symbolsParam
-        ? symbolsParam
+      const rawSymbols = req.query.symbols;
+      const requestedSymbols = Array.isArray(rawSymbols)
+        ? rawSymbols
+            .flatMap((value) =>
+              typeof value === "string"
+                ? value
+                    .split(",")
+                    .map((part) => part.trim())
+                    .filter((part) => part.length > 0)
+                : [],
+            )
+        : typeof rawSymbols === "string"
+        ? rawSymbols
             .split(",")
             .map((value) => value.trim())
             .filter((value) => value.length > 0)
@@ -1403,7 +1408,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
     } catch (error) {
       if (error instanceof QuickTradeError) {
         if (error.code === "DB_ERROR") {
-          return res.status(400).json({ code: "DB_ERROR" });
+          return res.status(500).json({ code: error.code, message: error.message });
         }
         return res.status(400).json({ code: error.code, message: error.message });
       }
@@ -2037,11 +2042,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const { user } = await ensureDefaultUser();
       const activeTimeframes = normalizeActiveTimeframes(parsed.data.activeTimeframes);
 
-      const result = await storage.upsertUserPairSettings({
-        userId: user.id,
-        symbol,
-        activeTimeframes,
-      });
+      const result = await storage.upsertUserPairSettingsRaw(user.id, symbol, activeTimeframes);
 
       res.json({ activeTimeframes: Array.isArray(result.activeTimeframes) ? result.activeTimeframes : [] });
     } catch (error) {

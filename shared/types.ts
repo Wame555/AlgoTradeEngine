@@ -34,6 +34,15 @@ export interface Market24hChangeResponse {
   items: Market24hChangeItem[];
 }
 
+export interface SymbolItem {
+  symbol: string;
+  active: boolean;
+}
+
+export interface SymbolsResponse {
+  items: SymbolItem[];
+}
+
 export interface PairTimeframeSettingsResponse {
   activeTimeframes: SupportedTimeframe[];
 }

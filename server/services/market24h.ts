@@ -8,15 +8,16 @@ type RawRow = {
   ts: Date | string;
 };
 
-type SymbolRow = {
-  symbol: string | null;
-};
-
 export interface Market24hChangeItem {
   symbol: string;
   last: number | null;
   prevClose: number | null;
   changePct: number | null;
+}
+
+export interface SymbolStatus {
+  symbol: string;
+  active: boolean;
 }
 
 function normalizeSymbol(value: string): string {
@@ -32,16 +33,6 @@ function normalizeSymbols(values: Iterable<string>): string[] {
     }
   }
   return Array.from(result);
-}
-
-function parseCsv(value: string | undefined | null): string[] {
-  if (!value) {
-    return [];
-  }
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
 }
 
 function toDecimal(value: unknown): Decimal | null {
@@ -113,33 +104,87 @@ async function getColumnNames(tableName: string): Promise<Set<string>> {
   return columns;
 }
 
-async function fetchSymbolsFromTable(tableName: string): Promise<string[]> {
+async function fetchSymbolsFromTable(tableName: string): Promise<SymbolStatus[]> {
   if (!(await tableExists(tableName))) {
     return [];
   }
 
   const columns = await getColumnNames(tableName);
-  let whereClause = "";
-  if (columns.has("is_active")) {
-    whereClause = 'WHERE "is_active" = true';
-  } else if (columns.has("active")) {
-    whereClause = 'WHERE "active" = true';
+  const selectColumns = ['symbol'];
+  if (columns.has('is_active')) {
+    selectColumns.push('is_active');
+  }
+  if (columns.has('active')) {
+    selectColumns.push('active');
   }
 
-  const query = `SELECT symbol FROM public."${tableName}" ${whereClause}`;
+  const query = `SELECT ${selectColumns.map((column) => `"${column}"`).join(', ')} FROM public."${tableName}"`;
   try {
-    const result = await pool.query<SymbolRow>(query);
-    const symbols = result.rows
-      .map((row) => row.symbol ?? "")
-      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-    return normalizeSymbols(symbols);
+    const result = await pool.query<Record<string, unknown>>(query);
+    const map = new Map<string, SymbolStatus>();
+    for (const row of result.rows) {
+      const rawSymbol = typeof row.symbol === 'string' ? row.symbol : null;
+      if (!rawSymbol) {
+        continue;
+      }
+      const symbol = normalizeSymbol(rawSymbol);
+      if (!symbol) {
+        continue;
+      }
+      let active = true;
+      if (columns.has('is_active') && typeof row.is_active === 'boolean') {
+        active = row.is_active;
+      } else if (columns.has('active') && typeof row.active === 'boolean') {
+        active = row.active;
+      }
+      const existing = map.get(symbol);
+      if (existing) {
+        map.set(symbol, { symbol, active: existing.active || active });
+      } else {
+        map.set(symbol, { symbol, active });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
   } catch {
     return [];
   }
 }
 
-export async function getActiveSymbolsFromDatabase(): Promise<string[]> {
-  const candidates = ["trading_pairs", "pairs", "symbols"] as const;
+async function fetchDistinctSymbolsFromMarketData(limit: number = 100): Promise<SymbolStatus[]> {
+  if (!(await tableExists('market_data'))) {
+    return [];
+  }
+
+  try {
+    const result = await pool.query<{ symbol: string | null }>(
+      `
+        SELECT symbol
+        FROM public."market_data"
+        GROUP BY symbol
+        ORDER BY symbol
+        LIMIT $1
+      `,
+      [limit],
+    );
+    const map = new Map<string, SymbolStatus>();
+    for (const row of result.rows) {
+      const rawSymbol = row.symbol ?? '';
+      const symbol = normalizeSymbol(rawSymbol);
+      if (!symbol) {
+        continue;
+      }
+      if (!map.has(symbol)) {
+        map.set(symbol, { symbol, active: true });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  } catch {
+    return [];
+  }
+}
+
+async function getSymbolsFromDatabase(): Promise<SymbolStatus[]> {
+  const candidates = ['trading_pairs', 'pairs', 'symbols'] as const;
   for (const tableName of candidates) {
     const symbols = await fetchSymbolsFromTable(tableName);
     if (symbols.length > 0) {
@@ -149,25 +194,28 @@ export async function getActiveSymbolsFromDatabase(): Promise<string[]> {
   return [];
 }
 
+export async function listSymbolsWithStatus(): Promise<SymbolStatus[]> {
+  const fromDb = await getSymbolsFromDatabase();
+  if (fromDb.length > 0) {
+    return fromDb;
+  }
+  return fetchDistinctSymbolsFromMarketData();
+}
+
 export async function resolveSymbolsForMarketChange(requestedSymbols: string[] = []): Promise<string[]> {
   const requested = normalizeSymbols(requestedSymbols);
-  const active = await getActiveSymbolsFromDatabase();
-
-  if (active.length > 0) {
-    if (requested.length === 0) {
-      return active;
-    }
-    const activeSet = new Set(active);
-    const filtered = requested.filter((symbol) => activeSet.has(symbol));
-    return filtered.length > 0 ? filtered : requested;
-  }
-
   if (requested.length > 0) {
     return requested;
   }
 
-  const envSymbols = parseCsv(process.env.SYMBOL_LIST);
-  return normalizeSymbols(envSymbols);
+  const fromDb = await getSymbolsFromDatabase();
+  const active = fromDb.filter((item) => item.active).map((item) => item.symbol);
+  if (active.length > 0) {
+    return active;
+  }
+
+  const fallback = await fetchDistinctSymbolsFromMarketData();
+  return fallback.map((item) => item.symbol);
 }
 
 export async function get24hChangeForSymbols(symbols: string[]): Promise<Market24hChangeItem[]> {
