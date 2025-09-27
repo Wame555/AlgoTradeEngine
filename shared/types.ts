@@ -23,6 +23,17 @@ export interface StatsChangeResponse {
   partialData?: boolean;
 }
 
+export interface Market24hChangeItem {
+  symbol: string;
+  last: number | null;
+  prevClose: number | null;
+  changePct: number | null;
+}
+
+export interface Market24hChangeResponse {
+  items: Market24hChangeItem[];
+}
+
 export interface PairTimeframeSettingsResponse {
   symbol: string;
   activeTimeframes: SupportedTimeframe[];

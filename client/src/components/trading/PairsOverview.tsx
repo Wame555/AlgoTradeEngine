@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { usePositions, useSignals, useTradingPairs, usePairTimeframes } from "@/hooks/useTradingData";
+import { usePositions, useSignals, useTradingPairs, usePairTimeframes, useMarket24hChange } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import { useChangeStats } from "@/hooks/useChangeStats";
 import { TIMEFRAMES } from "@/constants/timeframes";
@@ -44,6 +44,7 @@ interface PairRowProps {
   priceInfo?: PriceUpdate;
   position?: Position;
   signal?: Signal;
+  dailyChangePct?: number | null;
   onOpenPosition: (symbol: string, side: "LONG" | "SHORT") => void;
   onClosePosition: (positionId: string) => void;
   canOpenPosition: boolean;
@@ -108,6 +109,7 @@ function PairRow({
   priceInfo,
   position,
   signal,
+  dailyChangePct,
   onOpenPosition,
   onClosePosition,
   canOpenPosition,
@@ -125,7 +127,6 @@ function PairRow({
     );
   }, [availableTimeframes]);
   const { data: changeStats, isLoading } = useChangeStats(pair.symbol, selectedTimeframe);
-  const { data: dailyChangeStats } = useChangeStats(pair.symbol, "1d");
 
   useEffect(() => {
     if (allowedTimeframes.size === 0) {
@@ -151,10 +152,7 @@ function PairRow({
   const pnlClass = trendClass(pnlValue);
   const hasPosition = Boolean(position);
   const price = priceInfo ? `$${parseFloat(priceInfo.price).toFixed(8)}` : "…";
-  const dailyChange =
-    dailyChangeStats && !dailyChangeStats.partialData && Number.isFinite(dailyChangeStats.changePct)
-      ? dailyChangeStats.changePct
-      : undefined;
+  const dailyChange = dailyChangePct != null && Number.isFinite(dailyChangePct) ? dailyChangePct : null;
   const dailyChangeClass = dailyChange != null ? trendClass(dailyChange) : "text-muted-foreground";
 
   return (
@@ -304,6 +302,9 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
     return [...tradingPairs].sort((a, b) => a.symbol.localeCompare(b.symbol));
   }, [tradingPairs]);
 
+  const symbolList = useMemo(() => sortedPairs.map((pair) => pair.symbol), [sortedPairs]);
+  const { data: dailyChangeMap } = useMarket24hChange(symbolList);
+
   const closePositionMutation = useMutation({
     mutationFn: async (positionId: string) => {
       await apiRequest("POST", `/api/trades/close`, { positionId });
@@ -406,6 +407,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                 onClick={() => {
                   queryClient.invalidateQueries({ queryKey: ["/api/market-data"] });
                   queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/market/24h"] });
                 }}
               >
                 <RefreshCw className="mr-1 h-4 w-4" />
@@ -443,6 +445,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                       priceInfo={priceInfo}
                       position={position}
                       signal={signal}
+                      dailyChangePct={dailyChangeMap?.get(symbol)?.changePct ?? null}
                       onOpenPosition={(sym, side) => createPositionMutation.mutate({ symbol: sym, side })}
                       onClosePosition={(positionId) => closePositionMutation.mutate(positionId)}
                       canOpenPosition={Boolean(userId)}

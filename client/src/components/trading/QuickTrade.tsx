@@ -13,7 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { useTradingPairs, useUserSettings } from "@/hooks/useTradingData";
+import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradingUtils";
 import { PriceUpdate, TradingPair } from "@/types/trading";
@@ -72,6 +72,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const userId = session?.userId;
   const { data: tradingPairs } = useTradingPairs();
   const { data: settings } = useUserSettings();
+  const { data: statsSummary } = useStatsSummary();
   const [hasEquityError, setHasEquityError] = useState(false);
 
   const form = useForm<TradeForm>({
@@ -167,11 +168,11 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       }
 
       if (data.takeProfit) {
-        payload.tpPrice = Number(data.takeProfit);
+        payload.tp_price = Number(data.takeProfit);
       }
 
       if (data.stopLoss) {
-        payload.slPrice = Number(data.stopLoss);
+        payload.sl_price = Number(data.stopLoss);
       }
 
       if (Number.isFinite(data.leverage) && data.leverage > 0) {
@@ -245,7 +246,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       return;
     }
 
-    if (!data.symbol) {
+    const symbol = data.symbol?.trim().toUpperCase();
+    if (!symbol) {
       toast({
         title: "Select symbol",
         description: "Choose a trading pair before placing an order.",
@@ -254,7 +256,94 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       return;
     }
 
-    createPositionMutation.mutate(data);
+    if (!data.side) {
+      toast({
+        title: "Select side",
+        description: "Choose LONG or SHORT before placing an order.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const mode = data.mode;
+    let qtyValue: number | null = null;
+    let usdtValue: number | null = null;
+
+    if (mode === 'QTY') {
+      qtyValue = Number(data.size);
+      if (!Number.isFinite(qtyValue) || qtyValue <= 0) {
+        toast({
+          title: "Invalid size",
+          description: "Enter a valid position size.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else {
+      usdtValue = Number(data.amountUsd);
+      if (!Number.isFinite(usdtValue) || usdtValue <= 0) {
+        toast({
+          title: "Invalid amount",
+          description: "Enter a valid USDT amount.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    let requiredUsd = 0;
+    if (mode === 'USDT') {
+      requiredUsd = usdtValue ?? 0;
+    } else {
+      const lastPrice = getLastPrice(symbol);
+      if (!lastPrice || !Number.isFinite(lastPrice) || lastPrice <= 0) {
+        toast({
+          title: "Missing price",
+          description: "Live price is unavailable for the selected symbol.",
+          variant: "destructive",
+        });
+        return;
+      }
+      requiredUsd = (qtyValue ?? 0) * lastPrice;
+    }
+
+    if (!Number.isFinite(requiredUsd) || requiredUsd <= 0) {
+      toast({
+        title: "Invalid order",
+        description: "Unable to determine order notional.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const equity = statsSummary?.equity;
+    if (Number.isFinite(equity) && requiredUsd > (equity as number)) {
+      setHasEquityError(true);
+      toast({
+        title: 'Nincs elegendő egyenleg',
+        description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setHasEquityError(false);
+
+    const payload: TradeForm = {
+      ...data,
+      symbol,
+      size: mode === 'QTY' && qtyValue != null ? qtyValue.toString() : data.size,
+      amountUsd: mode === 'USDT' && usdtValue != null ? usdtValue.toString() : data.amountUsd,
+    };
+
+    createPositionMutation.mutate(payload);
+  };
+
+  const handlePlaceOrder = () => {
+    if (createPositionMutation.isPending) {
+      return;
+    }
+    void form.handleSubmit(onSubmit)();
   };
 
   const handleSideClick = (side: 'LONG' | 'SHORT') => {
@@ -489,9 +578,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             </div>
 
             <Button
-              type="submit"
+              type="button"
               className="w-full"
-              disabled={createPositionMutation.isPending || tradingDisabled || hasEquityError}
+              disabled={createPositionMutation.isPending || tradingDisabled}
+              onClick={handlePlaceOrder}
               data-testid="button-place-order"
             >
               {createPositionMutation.isPending ? 'Placing Order...' : 'Place Order'}

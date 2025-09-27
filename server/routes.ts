@@ -13,7 +13,6 @@ import { paperAccounts } from "@shared/schemaPaper";
 import {
   insertUserSettingsSchema,
   insertPositionSchema,
-  insertUserPairSettingsSchema,
   closedPositions,
   indicatorConfigs,
   positions,
@@ -28,6 +27,7 @@ import { calculateQuantityFromUsd, QuantityValidationError } from "@shared/tradi
 import type { BinanceService } from "./services/binanceService";
 import type { TelegramService } from "./services/telegramService";
 import type { IndicatorService } from "./services/indicatorService";
+import { get24hChangeForSymbols } from "./services/market24h";
 import { getLastPrice as getPaperLastPrice } from "./paper/PriceFeed";
 import { startRiskWatcher } from "./services/riskWatcher";
 import { getAccountSnapshot, updateAccountSnapshot } from "./state/accountSnapshot";
@@ -78,6 +78,8 @@ const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
     unique: true,
   },
 ];
+
+const SUPPORTED_TIMEFRAME_SET = new Set<string>(SUPPORTED_TIMEFRAMES);
 
 function runUserSettingsGuard(): Promise<void> {
   if (!userSettingsGuardPromise) {
@@ -285,8 +287,8 @@ const quickTradeRequestSchema = z
     side: z.enum(["LONG", "SHORT"]),
     qty: z.union([z.string(), z.number()]).optional(),
     usdtAmount: z.union([z.string(), z.number()]).optional(),
-    tpPrice: z.union([z.string(), z.number(), z.null()]).optional(),
-    slPrice: z.union([z.string(), z.number(), z.null()]).optional(),
+    tp_price: z.union([z.string(), z.number(), z.null()]).optional(),
+    sl_price: z.union([z.string(), z.number(), z.null()]).optional(),
     leverage: z.union([z.string(), z.number()]).optional(),
   })
   .superRefine((data, ctx) => {
@@ -311,34 +313,31 @@ const quickTradeRequestSchema = z
       }
     }
 
-    if (data.tpPrice != null && Number(data.tpPrice) <= 0) {
+    if (data.tp_price != null && Number(data.tp_price) <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Take profit must be greater than zero",
-        path: ["tpPrice"],
+        path: ["tp_price"],
       });
     }
-    if (data.slPrice != null && Number(data.slPrice) <= 0) {
+    if (data.sl_price != null && Number(data.sl_price) <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Stop loss must be greater than zero",
-        path: ["slPrice"],
+        path: ["sl_price"],
       });
     }
   });
 
-const pairTimeframePatchSchema = z
+const pairSettingsPayloadSchema = z
   .object({
-    symbol: z.string().min(1, "Symbol is required"),
-    activeTimeframes: z
-      .array(z.string().min(1))
-      .max(SUPPORTED_TIMEFRAMES.length)
-      .default([]),
+    activeTimeframes: z.array(z.string()).optional().nullable(),
   })
   .superRefine((data, ctx) => {
-    const invalid = data.activeTimeframes.filter(
-      (tf) => !SUPPORTED_TIMEFRAMES.includes(tf as (typeof SUPPORTED_TIMEFRAMES)[number]),
-    );
+    const values = Array.isArray(data.activeTimeframes) ? data.activeTimeframes : [];
+    const invalid = values
+      .map((value) => value?.toString().trim())
+      .filter((value): value is string => Boolean(value) && !SUPPORTED_TIMEFRAME_SET.has(value));
     if (invalid.length > 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -347,6 +346,23 @@ const pairTimeframePatchSchema = z
       });
     }
   });
+
+function normalizeActiveTimeframes(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (trimmed && SUPPORTED_TIMEFRAME_SET.has(trimmed)) {
+      result.add(trimmed);
+    }
+  }
+  return Array.from(result);
+}
 
 const accountPatchSchema = z
   .object({
@@ -1172,6 +1188,34 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
+  app.get("/api/market/24h", async (req, res) => {
+    try {
+      const symbolsParam = typeof req.query.symbols === "string" ? req.query.symbols : undefined;
+      let symbols: string[] = [];
+
+      if (symbolsParam) {
+        symbols = symbolsParam
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+      } else {
+        const pairs = await storage.getAllTradingPairs();
+        symbols = pairs.map((pair) => pair.symbol);
+      }
+
+      const uniqueSymbols = Array.from(new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean)));
+
+      if (uniqueSymbols.length === 0) {
+        return res.json({ items: [] });
+      }
+
+      const items = await get24hChangeForSymbols(uniqueSymbols);
+      res.json({ items });
+    } catch (error) {
+      respondWithError(res, "GET /api/market/24h", error, "Failed to fetch 24h market change");
+    }
+  });
+
   app.get("/api/settings/:userId", async (req, res) => {
     try {
       const { userId } = req.params;
@@ -1319,8 +1363,14 @@ export function registerRoutes(app: Express, deps: Deps): void {
   });
 
   app.post("/api/positions", async (req, res) => {
+    const parsed = quickTradeRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const firstError = parsed.error.errors[0]?.message ?? "Invalid request";
+      return res.status(400).json({ code: "BAD_REQUEST", message: firstError });
+    }
+
     try {
-      const payload = quickTradeRequestSchema.parse(req.body ?? {});
+      const payload = parsed.data;
       const symbol = payload.symbol.toUpperCase();
       const side = payload.side;
       const mode = payload.mode;
@@ -1340,6 +1390,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
       const priceDecimal = new Decimal(lastPrice as number);
       let qtyDecimal: Decimal | null = null;
       let amountUsdDecimal: Decimal | null = null;
+      let requiredUsdDecimal: Decimal | null = null;
 
       if (mode === "QTY") {
         qtyDecimal = decimalOrNull(payload.qty);
@@ -1347,6 +1398,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
           return res.status(400).json({ message: "Quantity must be greater than zero" });
         }
         amountUsdDecimal = qtyDecimal.times(priceDecimal);
+        requiredUsdDecimal = amountUsdDecimal;
       } else {
         amountUsdDecimal = decimalOrNull(payload.usdtAmount);
         if (!amountUsdDecimal || amountUsdDecimal.lte(0)) {
@@ -1378,18 +1430,22 @@ export function registerRoutes(app: Express, deps: Deps): void {
           }
           return res.status(400).json({ message: "Failed to calculate order quantity" });
         }
+
+        requiredUsdDecimal = amountUsdDecimal;
       }
 
       if (!qtyDecimal || qtyDecimal.lte(0)) {
         return res.status(400).json({ message: "Position size could not be determined" });
       }
 
-      const requiredNotional = amountUsdDecimal ?? qtyDecimal.times(priceDecimal);
+      if (!requiredUsdDecimal || !requiredUsdDecimal.isFinite()) {
+        requiredUsdDecimal = qtyDecimal.times(priceDecimal);
+      }
 
       const openPositions = await storage.getAllOpenPositions();
       const { equity } = await computeEquitySnapshot(settings, openPositions);
 
-      if (requiredNotional.gt(equity)) {
+      if (requiredUsdDecimal.gt(equity)) {
         return res.status(400).json({ code: "INSUFFICIENT_EQUITY", message: "Insufficient equity" });
       }
 
@@ -1422,8 +1478,8 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       const defaults = computeDefaultTargets(side, entryFill.toNumber(), settings);
 
-      const providedTp = payload.tpPrice === null ? null : decimalOrNull(payload.tpPrice);
-      const providedSl = payload.slPrice === null ? null : decimalOrNull(payload.slPrice);
+      const providedTp = payload.tp_price === null ? null : decimalOrNull(payload.tp_price);
+      const providedSl = payload.sl_price === null ? null : decimalOrNull(payload.sl_price);
 
       if (
         providedTp &&
@@ -1894,40 +1950,31 @@ export function registerRoutes(app: Express, deps: Deps): void {
     }
   });
 
-  app.get("/api/pairs/timeframes", async (req, res) => {
+  app.get("/api/pairs/:symbol/settings", async (req, res) => {
     try {
-      const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+      const { symbol: rawSymbol } = req.params;
+      const symbol = rawSymbol.toUpperCase();
       const { user } = await ensureDefaultUser();
-      if (symbol) {
-        const rows = await storage.getUserPairSettings(user.id, symbol);
-        const activeTimeframes = rows[0]?.activeTimeframes ?? [];
-        return res.json({ symbol, activeTimeframes });
-      }
-
-      const rows = await storage.getUserPairSettings(user.id);
-      res.json(
-        rows.map((row) => ({
-          symbol: row.symbol,
-          activeTimeframes: row.activeTimeframes ?? [],
-        })),
-      );
+      const rows = await storage.getUserPairSettings(user.id, symbol);
+      const activeTimeframes = rows[0]?.activeTimeframes ?? [];
+      res.json({ symbol, activeTimeframes });
     } catch (error) {
-      respondWithError(res, "GET /api/pairs/timeframes", error, "Failed to fetch pair timeframes");
+      respondWithError(res, "GET /api/pairs/:symbol/settings", error, "Failed to fetch pair settings");
     }
   });
 
-  app.patch("/api/pairs/timeframes", async (req, res) => {
+  app.patch("/api/pairs/:symbol/settings", async (req, res) => {
+    const { symbol: rawSymbol } = req.params;
+    const symbol = rawSymbol.toUpperCase();
+    const parsed = pairSettingsPayloadSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const firstError = parsed.error.errors[0]?.message ?? "Invalid request";
+      return res.status(400).json({ code: "BAD_REQUEST", message: firstError });
+    }
+
     try {
-      const payload = pairTimeframePatchSchema.parse(req.body ?? {});
       const { user } = await ensureDefaultUser();
-      const symbol = payload.symbol.toUpperCase();
-      const activeTimeframes = Array.from(
-        new Set(
-          (payload.activeTimeframes ?? [])
-            .map((tf) => tf.trim())
-            .filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as (typeof SUPPORTED_TIMEFRAMES)[number])),
-        ),
-      );
+      const activeTimeframes = normalizeActiveTimeframes(parsed.data.activeTimeframes);
 
       const result = await storage.upsertUserPairSettings({
         userId: user.id,
@@ -1937,7 +1984,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
 
       res.json({ symbol: result.symbol, activeTimeframes: result.activeTimeframes ?? [] });
     } catch (error) {
-      respondWithError(res, "PATCH /api/pairs/timeframes", error, "Failed to save pair timeframes");
+      respondWithError(res, "PATCH /api/pairs/:symbol/settings", error, "Failed to save pair settings");
     }
   });
 
