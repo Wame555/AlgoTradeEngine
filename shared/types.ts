@@ -35,7 +35,6 @@ export interface Market24hChangeResponse {
 }
 
 export interface PairTimeframeSettingsResponse {
-  symbol: string;
   activeTimeframes: SupportedTimeframe[];
 }
 

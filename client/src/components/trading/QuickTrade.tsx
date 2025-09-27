@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -155,7 +155,16 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         throw new Error('Unable to determine position size');
       }
 
-      const payload: Record<string, unknown> = {
+      const payload: {
+        mode: 'QTY' | 'USDT';
+        symbol: string;
+        side: 'LONG' | 'SHORT';
+        qty?: number;
+        usdtAmount?: number;
+        tp_price?: number;
+        sl_price?: number;
+        leverage?: number;
+      } = {
         mode: data.mode,
         symbol: data.symbol,
         side: data.side,
@@ -167,12 +176,14 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
         payload.usdtAmount = Number(amountToUse);
       }
 
-      if (data.takeProfit) {
-        payload.tp_price = Number(data.takeProfit);
+      const tpNumeric = data.takeProfit ? Number(data.takeProfit) : null;
+      if (tpNumeric != null && Number.isFinite(tpNumeric) && tpNumeric > 0) {
+        payload.tp_price = tpNumeric;
       }
 
-      if (data.stopLoss) {
-        payload.sl_price = Number(data.stopLoss);
+      const slNumeric = data.stopLoss ? Number(data.stopLoss) : null;
+      if (slNumeric != null && Number.isFinite(slNumeric) && slNumeric > 0) {
+        payload.sl_price = slNumeric;
       }
 
       if (Number.isFinite(data.leverage) && data.leverage > 0) {
@@ -316,15 +327,17 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       return;
     }
 
-    const equity = statsSummary?.equity;
-    if (Number.isFinite(equity) && requiredUsd > (equity as number)) {
-      setHasEquityError(true);
-      toast({
-        title: 'Nincs elegendő egyenleg',
-        description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
-        variant: 'destructive',
-      });
-      return;
+    if (mode === 'USDT') {
+      const equity = statsSummary?.equity;
+      if (Number.isFinite(equity) && usdtValue != null && usdtValue > (equity as number)) {
+        setHasEquityError(true);
+        toast({
+          title: 'Nincs elegendő egyenleg',
+          description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+          variant: 'destructive',
+        });
+        return;
+      }
     }
 
     setHasEquityError(false);
@@ -348,6 +361,14 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   const handleSideClick = (side: 'LONG' | 'SHORT') => {
     form.setValue('side', side);
+  };
+
+  const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (createPositionMutation.isPending) {
+      return;
+    }
+    handlePlaceOrder();
   };
 
   const availablePairs = tradingPairs ?? [];
@@ -383,7 +404,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={handleFormSubmit} className="space-y-4">
             <FormField
               control={form.control}
               name="symbol"
