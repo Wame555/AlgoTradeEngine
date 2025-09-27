@@ -23,7 +23,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
   const [selectedPair, setSelectedPair] = useState<string>('');
   const [selectedTimeframes, setSelectedTimeframes] = useState<string[]>([]);
 
-  const { data: pairTimeframes = [] } = usePairTimeframes(selectedPair || undefined);
+  const { data: pairTimeframeData } = usePairTimeframes(selectedPair || undefined);
   const { data: selectedPairChangeStats } = useChangeStats(selectedPair || undefined, "1d");
 
   useEffect(() => {
@@ -34,13 +34,13 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
 
   useEffect(() => {
     if (!selectedPair) return;
-    if (!Array.isArray(pairTimeframes)) {
+    if (!Array.isArray(pairTimeframeData)) {
       setSelectedTimeframes([]);
       return;
     }
-    const valid = pairTimeframes.filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as typeof SUPPORTED_TIMEFRAMES[number]));
+    const valid = pairTimeframeData.filter((tf) => SUPPORTED_TIMEFRAMES.includes(tf as typeof SUPPORTED_TIMEFRAMES[number]));
     setSelectedTimeframes(valid);
-  }, [pairTimeframes, selectedPair]);
+  }, [pairTimeframeData, selectedPair]);
 
   const sortedPairs = useMemo<TradingPair[]>(() => {
     if (!tradingPairs) return [];
@@ -49,8 +49,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
 
   const saveTimeframesMutation = useMutation({
     mutationFn: async (data: { symbol: string; timeframes: string[] }) => {
-      await apiRequest('PATCH', '/api/pairs/timeframes', {
-        symbol: data.symbol,
+      await apiRequest('PATCH', `/api/pairs/${data.symbol}/settings`, {
         activeTimeframes: data.timeframes,
       });
     },
@@ -60,7 +59,7 @@ export default function PairAnalysis({ priceData }: PairAnalysisProps) {
         description: "Timeframe settings saved successfully",
         variant: "default",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/pairs/timeframes', { symbol: variables.symbol }] });
+      queryClient.invalidateQueries({ queryKey: ['/api/pairs', variables.symbol, 'settings'] });
     },
     onError: (error: any) => {
       const message = typeof error?.message === 'string' ? error.message : 'Failed to save timeframe settings';

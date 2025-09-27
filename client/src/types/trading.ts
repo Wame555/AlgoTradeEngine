@@ -3,6 +3,8 @@ import type {
   StatsChangeResponse,
   StatsSummaryResponse,
   SupportedTimeframe,
+  Market24hChangeItem,
+  Market24hChangeResponse,
 } from '@shared/types';
 import { SUPPORTED_TIMEFRAMES as SHARED_SUPPORTED_TIMEFRAMES } from '@shared/types';
 import { TIMEFRAMES } from '@/constants/timeframes';
@@ -141,6 +143,9 @@ export interface PriceUpdate {
   high24h?: string;
   low24h?: string;
 }
+
+export type Market24hChange = Market24hChangeItem;
+export type Market24hChangeResult = Market24hChangeResponse;
 
 export interface WebSocketMessage {
   type: string;
