@@ -1,11 +1,27 @@
 import express from "express";
-import cors from "cors";
 import morgan from "morgan";
 import quickTradeRouter from "./routes/quickTrade";
 
 const app = express();
 
-app.use(cors());
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  );
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With"
+  );
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
 app.use(express.json());
 app.use(morgan("dev"));
 
