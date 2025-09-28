@@ -8,8 +8,6 @@ import {
   UserSettings,
   AccountSnapshot,
   StatsSummary,
-  Market24hChange,
-  Market24hChangeResult,
 } from '@/types/trading';
 import { useSession, useUserId } from '@/hooks/useSession';
 import { useOpenPositions } from '@/hooks/useOpenPositions';
@@ -130,36 +128,6 @@ export function usePairTimeframes(symbol?: string) {
         return [];
       }
       return result.activeTimeframes.filter((value: unknown) => typeof value === 'string') as string[];
-    },
-  });
-}
-
-export function useMarket24hChange(symbols?: string[]) {
-  const shouldFetchAll = symbols == null;
-  const cleanedSymbols = (symbols ?? [])
-    .map((symbol) => symbol?.toUpperCase() ?? '')
-    .filter((symbol) => symbol.length > 0);
-  const uniqueSymbols = Array.from(new Set(cleanedSymbols));
-
-  const queryKey = shouldFetchAll
-    ? ['/api/market/24h']
-    : ['/api/market/24h', { symbols: uniqueSymbols.join(',') }];
-
-  return useQuery<Market24hChangeResult, unknown, Map<string, Market24hChange>>({
-    queryKey,
-    staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
-    enabled: shouldFetchAll || uniqueSymbols.length > 0,
-    select: (response) => {
-      const items = Array.isArray(response?.items) ? response.items : [];
-      const map = new Map<string, Market24hChange>();
-      for (const item of items) {
-        if (!item?.symbol) {
-          continue;
-        }
-        map.set(item.symbol, item);
-      }
-      return map;
     },
   });
 }

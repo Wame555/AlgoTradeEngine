@@ -10,7 +10,9 @@ export function toNumLocale(input: unknown): number | null {
   const v = Number(s);
   return Number.isFinite(v) ? v : null;
 }
+
 export function roundToStep(v: number, step = 1e-8): number {
+  if (!Number.isFinite(v) || step <= 0) return v;
   const inv = 1 / step;
   return Math.floor(v * inv + 1e-9) / inv;
 }
