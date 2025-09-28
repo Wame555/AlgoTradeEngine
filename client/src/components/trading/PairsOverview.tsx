@@ -21,12 +21,13 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { usePositions, useSignals, useTradingPairs, usePairTimeframes, useMarket24hChange } from "@/hooks/useTradingData";
+import { usePositions, useSignals, useTradingPairs, usePairTimeframes } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import { useChangeStats } from "@/hooks/useChangeStats";
 import { TIMEFRAMES } from "@/constants/timeframes";
 import { formatPct, formatUsd, trendClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useTwentyFourH } from "../../../../frontend/hooks/use24h";
 import type {
   Position,
   PriceUpdate,
@@ -290,7 +291,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
   }, [tradingPairs]);
 
   const symbolList = useMemo(() => sortedPairs.map((pair) => pair.symbol), [sortedPairs]);
-  const { data: dailyChangeMap } = useMarket24hChange(symbolList);
+  const { data: dailyChangeData } = useTwentyFourH(symbolList);
 
   const closePositionMutation = useMutation({
     mutationFn: async (positionId: string) => {
@@ -361,7 +362,6 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                 onClick={() => {
                   queryClient.invalidateQueries({ queryKey: ["/api/market-data"] });
                   queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
-                  queryClient.invalidateQueries({ queryKey: ["/api/market/24h"] });
                 }}
               >
                 <RefreshCw className="mr-1 h-4 w-4" />
@@ -399,7 +399,7 @@ export function PairsOverview({ priceData }: PairsOverviewProps) {
                       priceInfo={priceInfo}
                       position={position}
                       signal={signal}
-                      dailyChangePct={dailyChangeMap?.get(symbol)?.changePct ?? null}
+                      dailyChangePct={dailyChangeData?.[symbol]?.priceChangePercent ?? null}
                       onClosePosition={(positionId) => closePositionMutation.mutate(positionId)}
                       isClosePending={closePositionMutation.isPending}
                     />

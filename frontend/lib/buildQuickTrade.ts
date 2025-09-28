@@ -15,10 +15,10 @@ export interface BuildArgs {
 
 export function buildQuickTrade(a: BuildArgs): QuickTradeRequest {
   const symbol = (a.symbol ?? "").toString().trim() || "BTCUSDT";
-  const side = a.side;
-  const type = a.type;
   const step = a.qtyStep && a.qtyStep > 0 ? a.qtyStep : 1e-8;
 
+  const side = a.side;
+  const type = a.type;
   const price = toNumLocale(a.price);
   const lastPrice = toNumLocale(a.lastPrice);
   const qtyIn = toNumLocale(a.qtyInput);
@@ -34,11 +34,14 @@ export function buildQuickTrade(a: BuildArgs): QuickTradeRequest {
   }
 
   return {
-    symbol, side, type,
+    symbol,
+    side,
+    type,
     quantity: qty ?? 0,
     price: type === "LIMIT" ? usedPrice : usedPrice ?? null,
     mode: a.mode,
     quoteAmount: usdtIn ?? null,
     lastPrice: type === "MARKET" ? (usedPrice ?? null) : usedPrice,
+    source: "quick-trade",
   };
 }

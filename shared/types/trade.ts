@@ -6,13 +6,14 @@ export type InputMode = "USDT" | "QTY";
 export interface QuickTradeRequest {
   symbol: string;
   side: Side;
-  quantity: number;            // normalized base qty sent to backend
   type: OrderType;
-  price?: number | null;       // LIMIT required; MARKET optional if lastPrice present
-  // --- optional, for convenience/telemetry ---
-  mode?: InputMode;            // which input the user edited
-  quoteAmount?: number | null; // USDT (quote) entered by user
-  lastPrice?: number | null;   // front-end known price for MARKET calc
+  quantity: number;            // base qty (derived if USDT mode)
+  price?: number | null;       // LIMIT required; MARKET optional
+  mode?: InputMode;
+  quoteAmount?: number | null; // USDT entered
+  lastPrice?: number | null;   // front-known price for MARKET
+  requestId?: string | null;   // optional client-provided id
+  source?: string | null;      // "quick-trade"
 }
 
 export interface QuickTradeResponse {
@@ -22,7 +23,6 @@ export interface QuickTradeResponse {
   orderId?: string | null;
   status?: string | null;
   ts: string;
-  // echo back computed values for UI confirmation
   symbol?: string;
   quantity?: number | null;
   price?: number | null;

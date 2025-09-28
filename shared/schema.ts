@@ -118,15 +118,17 @@ export const positions = pgTable(
     status: varchar("status", { length: 20 }).default("OPEN"), // OPEN, CLOSED, PENDING
     orderId: varchar("order_id", { length: 50 }),
     requestId: text("request_id"),
+    source: text("source"),
+    orderType: text("order_type"),
+    price: numeric("price", { precision: 18, scale: 8 }),
+    quantity: numeric("quantity", { precision: 18, scale: 8 }),
     openedAt: timestamp("opened_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
     closedAt: timestamp("closed_at"),
   },
   (table) => ({
     userIdx: index("idx_positions_user").on(table.userId),
-    requestIdUnique: uniqueIndex("idx_positions_request_id")
-      .on(table.requestId)
-      .where(sql`${table.requestId} IS NOT NULL`),
+    requestIdUnique: unique("positions_request_id_uniq").on(table.requestId),
   }),
 );
 

@@ -1,14 +1,13 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import type { QuickTradeRequest, QuickTradeResponse, Side, OrderType, InputMode } from "../../shared/types/trade";
-// Állítsd a projekt valós service útvonalára:
 import { placeOrder } from "../services/orders";
 
 const router = Router();
 
-const isSide = (x: unknown): x is Side => x === "BUY" || x === "SELL";
-const isType = (x: unknown): x is OrderType => x === "MARKET" || x === "LIMIT";
-const isMode = (x: unknown): x is InputMode => x === "USDT" || x === "QTY";
+const isSide = (x: any): x is Side => x === "BUY" || x === "SELL";
+const isType = (x: any): x is OrderType => x === "MARKET" || x === "LIMIT";
+const isMode = (x: any): x is InputMode => x === "USDT" || x === "QTY";
 
 function toNumLocale(input: unknown): number | null {
   if (typeof input === "number" && Number.isFinite(input)) return input;
@@ -24,7 +23,7 @@ function toNumLocale(input: unknown): number | null {
 }
 
 router.post("/quick-trade", async (req, res) => {
-  console.log("[quick-trade] inbound"); // belépési trace
+  console.log("[quick-trade] inbound");
 
   const b = (req?.body ?? {}) as Partial<QuickTradeRequest>;
   const symbol = typeof b.symbol === "string" && b.symbol.trim() ? b.symbol.trim() : null;
@@ -36,8 +35,6 @@ router.post("/quick-trade", async (req, res) => {
   const priceIn = b.price == null ? null : toNumLocale(b.price as any);
   const lastPriceIn = b.lastPrice == null ? null : toNumLocale(b.lastPrice as any);
   const quoteIn = b.quoteAmount == null ? null : toNumLocale(b.quoteAmount as any);
-
-  console.log("[quick-trade] payload:", { symbol, side, type, mode, qtyIn, priceIn, lastPriceIn, quoteIn });
 
   if (!symbol || !side || !type) {
     return res.status(400).json(<QuickTradeResponse>{
@@ -67,31 +64,45 @@ router.post("/quick-trade", async (req, res) => {
     });
   }
 
-  const requestId = crypto.randomUUID?.() ?? crypto.randomBytes(16).toString("hex");
+  const requestId = (typeof b.requestId === "string" && b.requestId) || crypto.randomUUID?.() || crypto.randomBytes(16).toString("hex");
 
   try {
     const result = await placeOrder({
-      symbol, side, type, quantity: qty,
+      symbol,
+      side,
+      type,
+      quantity: qty,
       price: type === "LIMIT" ? usedPrice! : undefined,
-      requestId, source: "quick-trade",
+      requestId,
+      source: "quick-trade",
     });
 
     console.log("[quick-trade] placed:", { requestId, orderId: (result as any)?.id });
 
     return res.status(200).json(<QuickTradeResponse>{
-      ok: true, message: "Order placed", requestId,
+      ok: true,
+      message: "Order placed",
+      requestId,
       orderId: (result as any)?.id ?? null,
       status: (result as any)?.status ?? "submitted",
       ts: new Date().toISOString(),
-      symbol, quantity: qty, price: usedPrice,
+      symbol,
+      quantity: qty,
+      price: usedPrice,
       quoteAmount: quoteIn ?? (usedPrice ? qty * usedPrice : null),
     });
   } catch (err: any) {
     console.error("[quick-trade] error:", err?.message || err);
     return res.status(500).json(<QuickTradeResponse>{
-      ok: false, message: String(err?.message ?? "Internal error"), requestId,
-      orderId: null, status: "error", ts: new Date().toISOString(),
-      symbol, quantity: qty ?? null, price: usedPrice,
+      ok: false,
+      message: String(err?.message ?? "Internal error"),
+      requestId,
+      orderId: null,
+      status: "error",
+      ts: new Date().toISOString(),
+      symbol,
+      quantity: qty ?? null,
+      price: usedPrice,
       quoteAmount: quoteIn ?? (usedPrice && qty ? qty * usedPrice : null),
     });
   }
