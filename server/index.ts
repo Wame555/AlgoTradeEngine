@@ -9,6 +9,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import { setupVite, serveStatic, log } from "./vite";
 import { registerRoutes } from "./routes";
+import quickTradeRouter from "./routes/quickTrade";
 
 import { PaperBroker } from "./paper/PaperBroker";
 import type { Broker } from "./broker/types";
@@ -88,6 +89,7 @@ if (shouldLogRequests) {
     app.use(requestLogger);
 }
 app.use(express.json());
+app.use(quickTradeRouter);
 
 app.get("/healthz", async (_req, res) => {
     let dbHealthy = false;

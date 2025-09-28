@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { BarChart3, Trophy, ArrowUpDown, DollarSign } from "lucide-react";
 
 import { PairsOverview } from "@/components/trading/PairsOverview";
-import { QuickTrade } from "@/components/trading/QuickTrade";
+import QuickTradePanel from "@/components/QuickTradePanel";
 import { ActiveModules } from "@/components/indicators/ActiveModules";
 import { RecentSignals } from "@/components/signals/RecentSignals";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -118,7 +118,7 @@ export default function Dashboard({ priceData }: DashboardProps) {
         </div>
 
         <div className="space-y-6">
-          <QuickTrade priceData={priceData} />
+          <QuickTradePanel />
           <ActiveModules />
           <RecentSignals />
         </div>
