@@ -1,8 +1,8 @@
-import type * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import React from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { z } from "zod";
 
@@ -77,6 +77,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const { data: statsSummary } = useStatsSummary();
   const [hasEquityError, setHasEquityError] = useState(false);
   const [pendingSide, setPendingSide] = useState<"LONG" | "SHORT" | null>(null);
+  const [isPending, setIsPending] = useState(false);
   const lastSubmitRef = useRef<number>(0);
 
   const form = useForm<TradeForm>({
@@ -92,6 +93,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       takeProfit: '',
     },
   });
+
+  React.useEffect(() => {
+    console.log("[QuickTrade] mounted");
+  }, []);
 
   useEffect(() => {
     http
@@ -128,55 +133,28 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     return Number.isFinite(price) ? price : null;
   };
 
-  const mutation = useMutation<QuickTradeResponse, Error, QuickTradeRequest>({
-    mutationFn: async (payload) => {
-      const data = await http.post<QuickTradeResponse>('/quick-trade', payload);
-      if (!data?.ok) {
-        const message = data?.message || 'Failed to place order';
-        throw new Error(message);
-      }
-
-      return data;
-    },
-    onSuccess: async (data) => {
-      setPendingSide(null);
-      setHasEquityError(false);
-      toast({
-        title: "Success",
-        description: `Order placed (requestId=${data.requestId})`,
-      });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
-        queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
-      ]);
-    },
-    onError: (error) => {
-      setPendingSide(null);
-      setHasEquityError(false);
-      const message = typeof error?.message === 'string' ? error.message : 'Failed to place order';
-
-      if (message.toLowerCase().includes('insufficient equity')) {
-        setHasEquityError(true);
+  const notify = React.useMemo(
+    () => ({
+      success: (message: string) =>
         toast({
-          title: 'Nincs elegendő egyenleg',
-          description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
-          variant: 'destructive',
-        });
-        return;
-      }
+          title: "Success",
+          description: message,
+        }),
+      error: (message: string) =>
+        toast({
+          title: "Error",
+          description: message,
+          variant: "destructive",
+        }),
+    }),
+    [toast],
+  );
 
-      toast({
-        title: 'Error',
-        description: message || 'Failed to place order',
-        variant: 'destructive',
-      });
-    },
-  });
-
-  const onSubmit = (data: TradeForm) => {
+  const handleValidatedSubmit = async (data: TradeForm) => {
     const resetPending = () => {
       setPendingSide(null);
       lastSubmitRef.current = 0;
+      setIsPending(false);
     };
 
     if (!userId) {
@@ -260,58 +238,108 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     }
 
     setHasEquityError(false);
-    mutation.mutate(payload);
+    setIsPending(true);
+
+    const requestPayload: QuickTradeRequest = {
+      symbol: payload.symbol,
+      side: payload.side,
+      type: payload.type,
+      quantity: payload.quantity ?? 0,
+      price: payload.type === "LIMIT" ? payload.price ?? null : payload.price ?? null,
+      mode: payload.mode ?? mode,
+      quoteAmount: payload.quoteAmount ?? null,
+      lastPrice: payload.lastPrice ?? lastPrice ?? null,
+    };
+
+    console.log("[QuickTrade] payload", requestPayload);
+
+    try {
+      const resp = await fetch("/api/quick-trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+      const dataResp = (await resp
+        .json()
+        .catch(() => null)) as QuickTradeResponse | null;
+      console.log("[QuickTrade] response", resp.status, dataResp);
+
+      if (resp.ok && dataResp?.ok) {
+        notify?.success?.(`Order placed (${dataResp.requestId})`) ?? console.log("Order placed");
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
+        ]);
+      } else {
+        const message = dataResp?.message ?? "Order failed";
+        if (message.toLowerCase().includes("insufficient equity")) {
+          setHasEquityError(true);
+          toast({
+            title: 'Nincs elegendő egyenleg',
+            description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+            variant: 'destructive',
+          });
+          console.error("Order failed - insufficient equity");
+        } else {
+          notify?.error?.(message) ?? console.error("Order failed");
+        }
+      }
+    } catch (err: any) {
+      notify?.error?.(err?.message ?? "Network error") ?? console.error(err);
+    } finally {
+      resetPending();
+    }
   };
 
-  const submitOrder = (sideOverride?: 'LONG' | 'SHORT') => {
-    if (mutation.isPending) {
+  const onQuickTradeSubmit = async (
+    event?: SyntheticEvent,
+    sideOverride?: 'LONG' | 'SHORT',
+  ) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+
+    if (isPending) {
       return;
     }
+
     const now = Date.now();
     if (now - lastSubmitRef.current < 1000) {
       return;
     }
     lastSubmitRef.current = now;
+
     if (sideOverride) {
       form.setValue('side', sideOverride);
       setPendingSide(sideOverride);
     } else {
       setPendingSide(form.getValues('side'));
     }
-    void form.handleSubmit(onSubmit)();
-  };
 
-  const onQuickTradeSubmit = async (event?: React.SyntheticEvent) => {
-    event?.preventDefault?.();
     console.log("[QuickTrade] submit clicked");
-    submitOrder();
+
+    if (event) {
+      await form.handleSubmit(handleValidatedSubmit)(event as any);
+    } else {
+      await form.handleSubmit(handleValidatedSubmit)();
+    }
   };
 
   const handleSideClick = (side: 'LONG' | 'SHORT') => {
-    submitOrder(side);
+    void onQuickTradeSubmit(undefined, side);
   };
 
   const availablePairs = tradingPairs ?? [];
   const tradingDisabled = availablePairs.length === 0 || !userId;
-  const isPending = mutation.isPending;
   const isFormDisabled = tradingDisabled || isPending;
   const mode = form.watch('mode') as InputMode;
   const watchedQty = form.watch('size');
   const watchedAmount = form.watch('amountUsd');
   const watchedSymbol = form.watch('symbol');
-  const qtyNumber = Number(watchedQty ?? 0);
-  const amountNumber = Number(watchedAmount ?? 0);
-  const hasQty = Number.isFinite(qtyNumber) && qtyNumber > 0;
-  const hasAmount = Number.isFinite(amountNumber) && amountNumber > 0;
-  const hasSymbol = Boolean(watchedSymbol?.trim());
-  const canSubmit = hasSymbol && (mode === 'QTY' ? hasQty : hasAmount);
-  const submitDisabled = isPending || tradingDisabled || !canSubmit;
-
-  useEffect(() => {
-    if (!mutation.isPending) {
-      setPendingSide(null);
-    }
-  }, [mutation.isPending]);
+  const submitDisabled =
+    tradingDisabled ||
+    !watchedSymbol?.toString().trim() ||
+    (!String(watchedQty ?? '').trim() && !String(watchedAmount ?? '').trim()) ||
+    isPending === true;
 
   useEffect(() => {
     if (mode === 'USDT') {
@@ -542,7 +570,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             </div>
 
             <Button
-              type="button"
+              id="qt-place-order"
+              data-qa="quick-trade-submit"
+              type="submit"
               className="w-full"
               disabled={submitDisabled}
               onClick={onQuickTradeSubmit}
