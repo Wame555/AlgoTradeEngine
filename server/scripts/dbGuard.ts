@@ -422,7 +422,7 @@ async function ensureUsersTable(client: PgClient): Promise<void> {
   });
   await ensureUniqueConstraint(client, {
     table: "users",
-    name: "users_username_unique",
+    name: "users_username_uniq",
     columns: ["username"],
   });
 }
@@ -637,6 +637,12 @@ async function ensureTradingPairsColumns(client: PgClient): Promise<void> {
   await ensureColumn(client, "trading_pairs", "min_notional", "numeric(18, 8)");
   await ensureColumn(client, "trading_pairs", "step_size", "numeric(18, 8)");
   await ensureColumn(client, "trading_pairs", "tick_size", "numeric(18, 8)");
+
+  await ensureUniqueConstraint(client, {
+    table: "trading_pairs",
+    name: "trading_pairs_symbol_uniq",
+    columns: ["symbol"],
+  });
 }
 
 async function ensureDemoUser(client: PgClient): Promise<void> {
