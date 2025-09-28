@@ -1,3 +1,4 @@
+import type * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,7 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
-import type { QuickTradeRequest, QuickTradeResponse } from "@shared/types/trade";
+import { http } from "@/lib/http";
+import type { InputMode, OrderType, QuickTradeRequest, QuickTradeResponse, Side } from "@shared/types/trade";
 import { buildQuickTradePayload } from "@/lib/quickTradeCalc";
 
 const tradeFormSchema = z
@@ -92,6 +94,17 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   });
 
   useEffect(() => {
+    http
+      .get<Record<string, unknown>>("/healthz")
+      .then(() => {
+        console.log("[QuickTrade] /healthz ok");
+      })
+      .catch((error) => {
+        console.warn("[QuickTrade] /healthz failed", error);
+      });
+  }, []);
+
+  useEffect(() => {
     if (tradingPairs && tradingPairs.length > 0) {
       const currentSymbol = form.getValues('symbol');
       if (!currentSymbol) {
@@ -117,18 +130,10 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   const mutation = useMutation<QuickTradeResponse, Error, QuickTradeRequest>({
     mutationFn: async (payload) => {
-      const response = await fetch('/api/quick-trade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        credentials: 'include',
-      });
-      const data = (await response.json().catch(() => null)) as QuickTradeResponse | null;
-
-      if (!response.ok || !data?.ok) {
-        const message = data?.message || response.statusText || 'Failed to place order';
-        const error = new Error(message);
-        throw error;
+      const data = await http.post<QuickTradeResponse>('/quick-trade', payload);
+      if (!data?.ok) {
+        const message = data?.message || 'Failed to place order';
+        throw new Error(message);
       }
 
       return data;
@@ -188,7 +193,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     }
 
     const side = data.side;
-    const mode = data.mode;
+    const mode = data.mode as InputMode;
+    const orderType: OrderType = 'MARKET';
     const lastPrice = getLastPrice(symbol);
     const parseInput = (value: string | number | null | undefined): number | null => {
       if (value == null || value === "") {
@@ -220,11 +226,11 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       }
     }
 
-    const orderSide: QuickTradeRequest["side"] = side === "SHORT" ? "SELL" : "BUY";
+    const orderSide: Side = side === "SHORT" ? "SELL" : "BUY";
     const payload: QuickTradeRequest = buildQuickTradePayload({
       symbol,
       side: orderSide,
-      type: "MARKET",
+      type: orderType,
       mode,
       quantityInput: mode === "QTY" ? sizeInput : null,
       usdtInput: mode === "USDT" ? amountInput : null,
@@ -275,7 +281,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     void form.handleSubmit(onSubmit)();
   };
 
-  const handlePlaceOrder = () => {
+  const onQuickTradeSubmit = async (event?: React.SyntheticEvent) => {
+    event?.preventDefault?.();
+    console.log("[QuickTrade] submit clicked");
     submitOrder();
   };
 
@@ -287,9 +295,17 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const tradingDisabled = availablePairs.length === 0 || !userId;
   const isPending = mutation.isPending;
   const isFormDisabled = tradingDisabled || isPending;
-  const mode = form.watch('mode');
+  const mode = form.watch('mode') as InputMode;
   const watchedQty = form.watch('size');
   const watchedAmount = form.watch('amountUsd');
+  const watchedSymbol = form.watch('symbol');
+  const qtyNumber = Number(watchedQty ?? 0);
+  const amountNumber = Number(watchedAmount ?? 0);
+  const hasQty = Number.isFinite(qtyNumber) && qtyNumber > 0;
+  const hasAmount = Number.isFinite(amountNumber) && amountNumber > 0;
+  const hasSymbol = Boolean(watchedSymbol?.trim());
+  const canSubmit = hasSymbol && (mode === 'QTY' ? hasQty : hasAmount);
+  const submitDisabled = isPending || tradingDisabled || !canSubmit;
 
   useEffect(() => {
     if (!mutation.isPending) {
@@ -324,13 +340,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              handlePlaceOrder();
-            }}
-            className="space-y-4"
-          >
+          <form onSubmit={onQuickTradeSubmit} className="space-y-4">
             <FormField
               control={form.control}
               name="symbol"
@@ -534,8 +544,8 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
             <Button
               type="button"
               className="w-full"
-              disabled={isPending || !form.getValues('symbol')}
-              onClick={handlePlaceOrder}
+              disabled={submitDisabled}
+              onClick={onQuickTradeSubmit}
               data-testid="button-place-order"
             >
               {isPending ? 'Placing Order...' : 'Place Order'}
