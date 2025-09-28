@@ -229,7 +229,7 @@ async function ensureDemoUserRecord(): Promise<User> {
   });
 }
 
-async function ensureDefaultUser() {
+export async function ensureDefaultUser() {
   const user = await ensureDemoUserRecord();
 
   let settings = await storage.getUserSettings(user.id);

@@ -10,6 +10,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { setupVite, serveStatic, log } from "./vite";
 import { registerRoutes } from "./routes";
 import quickTradeRouter from "./routes/quickTrade";
+import { configureOrderService } from "./services/orders";
 
 import { PaperBroker } from "./paper/PaperBroker";
 import type { Broker } from "./broker/types";
@@ -273,6 +274,8 @@ wss.on("connection", (ws) => {
         const { RealBinanceBroker } = await import("./real/RealBinanceBroker");
         broker = new RealBinanceBroker();
     }
+
+    configureOrderService(broker);
 
     // Szervizek
     const binanceService = new BinanceService();
