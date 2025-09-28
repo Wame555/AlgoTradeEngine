@@ -31,22 +31,28 @@ export const users = pgTable(
   },
   (table) => ({
     emailUnique: unique("users_email_uniq").on(table.email),
-    usernameUnique: unique("users_username_unique").on(table.username),
+    usernameUnique: unique("users_username_uniq").on(table.username),
   }),
 );
 
 // Trading pairs
-export const tradingPairs = pgTable("trading_pairs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  symbol: varchar("symbol", { length: 20 }).notNull().unique(),
-  baseAsset: varchar("base_asset", { length: 10 }).notNull(),
-  quoteAsset: varchar("quote_asset", { length: 10 }).notNull(),
-  isActive: boolean("is_active").default(true),
-  minNotional: numeric("min_notional", { precision: 18, scale: 8 }),
-  minQty: numeric("min_qty", { precision: 18, scale: 8 }),
-  stepSize: numeric("step_size", { precision: 18, scale: 8 }),
-  tickSize: numeric("tick_size", { precision: 18, scale: 8 }),
-});
+export const tradingPairs = pgTable(
+  "trading_pairs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    baseAsset: varchar("base_asset", { length: 10 }).notNull(),
+    quoteAsset: varchar("quote_asset", { length: 10 }).notNull(),
+    isActive: boolean("is_active").default(true),
+    minNotional: numeric("min_notional", { precision: 18, scale: 8 }),
+    minQty: numeric("min_qty", { precision: 18, scale: 8 }),
+    stepSize: numeric("step_size", { precision: 18, scale: 8 }),
+    tickSize: numeric("tick_size", { precision: 18, scale: 8 }),
+  },
+  (table) => ({
+    symbolUnique: unique("trading_pairs_symbol_uniq").on(table.symbol),
+  }),
+);
 
 // User settings
 export const userSettings = pgTable(
