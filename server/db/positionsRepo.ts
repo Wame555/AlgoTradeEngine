@@ -95,9 +95,13 @@ const COLUMN_MAP: Record<string, string> = {
 
 type PositionRow = Record<string, any>;
 
-type InsertPositionInput = InsertPosition & { id: string; updatedAt?: Date };
+type InsertPositionInput = InsertPosition & { id: string; updatedAt?: Date | null };
 
-type UpdatePositionInput = Partial<InsertPosition> & { updatedAt?: Date };
+type ColumnKey = keyof typeof COLUMN_MAP;
+
+export type UpdatePositionInput = Partial<Record<ColumnKey, unknown>> & {
+  updatedAt?: Date | null;
+};
 
 async function query<T = PositionRow>(sql: string, params: any[] = []): Promise<T[]> {
   const result = await pool.query(sql, params);
