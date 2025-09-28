@@ -1,14 +1,7 @@
-// server/routes/quickTrade.ts
 import { Router } from "express";
 import crypto from "node:crypto";
-import type {
-  QuickTradeRequest,
-  QuickTradeResponse,
-  Side,
-  OrderType,
-  InputMode,
-} from "../../shared/types/trade";
-import { ensureDefaultUser } from "../routes";
+import type { QuickTradeRequest, QuickTradeResponse, Side, OrderType, InputMode } from "../../shared/types/trade";
+// Állítsd a projekt valós service útvonalára:
 import { placeOrder } from "../services/orders";
 
 const router = Router();
@@ -17,51 +10,38 @@ const isSide = (x: unknown): x is Side => x === "BUY" || x === "SELL";
 const isType = (x: unknown): x is OrderType => x === "MARKET" || x === "LIMIT";
 const isMode = (x: unknown): x is InputMode => x === "USDT" || x === "QTY";
 
-function toNum(n: unknown): number | null {
-  if (typeof n === "number" && Number.isFinite(n)) return n;
-  if (typeof n === "string") {
-    const v = Number(n);
-    return Number.isFinite(v) ? v : null;
-  }
-  return null;
-}
-
-function roundToStep(v: number, step = 1e-8): number {
-  const inv = 1 / step;
-  return Math.floor(v * inv + 1e-9) / inv;
+function toNumLocale(input: unknown): number | null {
+  if (typeof input === "number" && Number.isFinite(input)) return input;
+  if (typeof input !== "string") return null;
+  let s = input.trim();
+  if (!s) return null;
+  s = s.replace(/\u00A0/g, " ").replace(/\s+/g, "");
+  if (s.includes(",") && s.includes(".")) s = s.replace(/,/g, "");
+  else if (s.includes(",") && !s.includes(".")) s = s.replace(/,/g, ".");
+  if (!/^[+-]?\d*(?:\.\d+)?$/.test(s)) return null;
+  const v = Number(s);
+  return Number.isFinite(v) ? v : null;
 }
 
 router.post("/quick-trade", async (req, res) => {
-  console.log("[quick-trade] inbound");
-  const b = (req?.body ?? {}) as Partial<QuickTradeRequest>;
+  console.log("[quick-trade] inbound"); // belépési trace
 
+  const b = (req?.body ?? {}) as Partial<QuickTradeRequest>;
   const symbol = typeof b.symbol === "string" && b.symbol.trim() ? b.symbol.trim() : null;
   const side = isSide(b.side) ? b.side : null;
   const type = isType(b.type) ? b.type : null;
+  const mode = isMode(b.mode) ? b.mode : "QTY";
 
-  const quantityIn = toNum(b.quantity);
-  const priceIn = b.price == null ? null : toNum(b.price);
-  const lastPriceIn = b.lastPrice == null ? null : toNum(b.lastPrice);
-  const quoteIn = b.quoteAmount == null ? null : toNum(b.quoteAmount);
-  const mode = isMode(b.mode) ? b.mode : null;
+  const qtyIn = toNumLocale(b.quantity as any);
+  const priceIn = b.price == null ? null : toNumLocale(b.price as any);
+  const lastPriceIn = b.lastPrice == null ? null : toNumLocale(b.lastPrice as any);
+  const quoteIn = b.quoteAmount == null ? null : toNumLocale(b.quoteAmount as any);
 
-  console.log("[quick-trade] payload:", {
-    symbol,
-    side,
-    type,
-    quantityIn,
-    priceIn,
-    lastPriceIn,
-    quoteIn,
-    mode,
-  });
+  console.log("[quick-trade] payload:", { symbol, side, type, mode, qtyIn, priceIn, lastPriceIn, quoteIn });
 
   if (!symbol || !side || !type) {
     return res.status(400).json(<QuickTradeResponse>{
-      ok: false,
-      message: "Invalid payload: symbol/side/type required",
-      requestId: "",
-      ts: new Date().toISOString(),
+      ok: false, message: "Invalid payload: symbol/side/type required", requestId: "", ts: new Date().toISOString(),
     });
   }
 
@@ -69,10 +49,7 @@ router.post("/quick-trade", async (req, res) => {
   if (type === "LIMIT") {
     if (!priceIn || priceIn <= 0) {
       return res.status(400).json(<QuickTradeResponse>{
-        ok: false,
-        message: "Price required for LIMIT",
-        requestId: "",
-        ts: new Date().toISOString(),
+        ok: false, message: "Price required for LIMIT", requestId: "", ts: new Date().toISOString(),
       });
     }
     usedPrice = priceIn;
@@ -80,75 +57,42 @@ router.post("/quick-trade", async (req, res) => {
     usedPrice = priceIn ?? lastPriceIn ?? null;
   }
 
-  let qty: number | null = quantityIn && quantityIn > 0 ? quantityIn : null;
-
-  if ((!qty || qty <= 0) && quoteIn && quoteIn > 0) {
-    if (!usedPrice || usedPrice <= 0) {
-      return res.status(400).json(<QuickTradeResponse>{
-        ok: false,
-        message: "Price is required to derive quantity from USDT (provide price or lastPrice).",
-        requestId: "",
-        ts: new Date().toISOString(),
-      });
-    }
-    qty = roundToStep(quoteIn / usedPrice, 1e-8);
+  let qty: number | null = qtyIn && qtyIn > 0 ? qtyIn : null;
+  if ((!qty || qty <= 0) && quoteIn && quoteIn > 0 && usedPrice && usedPrice > 0) {
+    qty = Math.floor((quoteIn / usedPrice) * 1e8 + 1e-9) / 1e8;
   }
-
   if (!qty || qty <= 0) {
     return res.status(400).json(<QuickTradeResponse>{
-      ok: false,
-      message: "Quantity is required (directly or derived from USDT).",
-      requestId: "",
-      ts: new Date().toISOString(),
+      ok: false, message: "Quantity is required (direct or derived).", requestId: "", ts: new Date().toISOString(),
     });
   }
 
   const requestId = crypto.randomUUID?.() ?? crypto.randomBytes(16).toString("hex");
 
   try {
-    const { user, settings } = await ensureDefaultUser();
-    const leverageRaw = Number(settings?.defaultLeverage ?? 1);
-    const leverage = Number.isFinite(leverageRaw) && leverageRaw > 0 ? leverageRaw : 1;
-
     const result = await placeOrder({
-      symbol,
-      side,
-      type,
-      quantity: qty,
-      price: usedPrice,
-      requestId,
-      userId: user.id,
-      leverage,
-      source: "quick-trade",
+      symbol, side, type, quantity: qty,
+      price: type === "LIMIT" ? usedPrice! : undefined,
+      requestId, source: "quick-trade",
     });
 
-    console.log("[quick-trade] placed:", { requestId, resultId: result.id });
+    console.log("[quick-trade] placed:", { requestId, orderId: (result as any)?.id });
 
     return res.status(200).json(<QuickTradeResponse>{
-      ok: true,
-      message: "Order placed",
-      requestId,
-      orderId: result.orderId ?? null,
-      status: result.status ?? "submitted",
+      ok: true, message: "Order placed", requestId,
+      orderId: (result as any)?.id ?? null,
+      status: (result as any)?.status ?? "submitted",
       ts: new Date().toISOString(),
-      symbol,
-      quantity: qty,
-      price: usedPrice,
+      symbol, quantity: qty, price: usedPrice,
       quoteAmount: quoteIn ?? (usedPrice ? qty * usedPrice : null),
     });
   } catch (err: any) {
     console.error("[quick-trade] error:", err?.message || err);
     return res.status(500).json(<QuickTradeResponse>{
-      ok: false,
-      message: String(err?.message ?? "Internal error"),
-      requestId,
-      orderId: null,
-      status: "error",
-      ts: new Date().toISOString(),
-      symbol,
-      quantity: qty,
-      price: usedPrice,
-      quoteAmount: quoteIn ?? (usedPrice ? (qty ?? 0) * usedPrice : null),
+      ok: false, message: String(err?.message ?? "Internal error"), requestId,
+      orderId: null, status: "error", ts: new Date().toISOString(),
+      symbol, quantity: qty ?? null, price: usedPrice,
+      quoteAmount: quoteIn ?? (usedPrice && qty ? qty * usedPrice : null),
     });
   }
 });

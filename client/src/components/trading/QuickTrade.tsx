@@ -1,5 +1,5 @@
 import React from "react";
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,8 +17,8 @@ import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTr
 import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
 import { http } from "@/lib/http";
-import type { InputMode, OrderType, QuickTradeRequest, QuickTradeResponse, Side } from "@shared/types/trade";
-import { buildQuickTradePayload } from "@/lib/quickTradeCalc";
+import type { InputMode, OrderType, QuickTradeResponse, Side } from "@shared/types/trade";
+import { buildQuickTrade } from "../../../../frontend/lib/buildQuickTrade";
 
 const tradeFormSchema = z
   .object({
@@ -77,7 +77,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
   const { data: statsSummary } = useStatsSummary();
   const [hasEquityError, setHasEquityError] = useState(false);
   const [pendingSide, setPendingSide] = useState<"LONG" | "SHORT" | null>(null);
-  const [isPending, setIsPending] = useState(false);
+  const [pending, setPending] = useState(false);
   const lastSubmitRef = useRef<number>(0);
 
   const form = useForm<TradeForm>({
@@ -150,155 +150,55 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     [toast],
   );
 
-  const handleValidatedSubmit = async (data: TradeForm) => {
-    const resetPending = () => {
-      setPendingSide(null);
-      lastSubmitRef.current = 0;
-      setIsPending(false);
-    };
+  const mode = (form.watch('mode') as InputMode) ?? 'QTY';
+  const quantity = form.watch('size');
+  const usdtAmount = form.watch('amountUsd');
+  const symbolValue = form.watch('symbol');
+  const sideSelection = form.watch('side');
+  const orderSide: Side = sideSelection === 'SHORT' ? 'SELL' : 'BUY';
+  const orderType: OrderType = 'MARKET';
+  const symbol = symbolValue?.trim()?.toUpperCase() ?? '';
+  const lastPrice = symbol ? getLastPrice(symbol) : null;
+
+  const lotStep = React.useMemo(() => {
+    if (!symbol) {
+      return null;
+    }
+    const pair = tradingPairs?.find((item) => item?.symbol?.toUpperCase() === symbol);
+    if (!pair) {
+      return null;
+    }
+    const step = typeof pair.stepSize === 'string' ? Number(pair.stepSize) : null;
+    if (step && Number.isFinite(step) && step > 0) {
+      return step;
+    }
+    const minQty = typeof pair.minQty === 'string' ? Number(pair.minQty) : null;
+    if (minQty && Number.isFinite(minQty) && minQty > 0) {
+      return minQty;
+    }
+    return null;
+  }, [tradingPairs, symbol]);
+
+  const availablePairs = tradingPairs ?? [];
+  const tradingDisabled = availablePairs.length === 0 || !userId;
+  const isFormDisabled = tradingDisabled || pending;
+
+  const onQuickTradeSubmit = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    console.log("[QuickTrade] submit clicked");
+
+    if (pending) {
+      return;
+    }
 
     if (!userId) {
       toast({ title: "Missing user", description: "User session is not ready yet.", variant: "destructive" });
-      resetPending();
       return;
     }
 
-    const symbol = data.symbol.trim().toUpperCase();
     if (!symbol) {
       toast({ title: "Select symbol", description: "Choose a trading pair before placing an order.", variant: "destructive" });
-      resetPending();
-      return;
-    }
-
-    const side = data.side;
-    const mode = data.mode as InputMode;
-    const orderType: OrderType = 'MARKET';
-    const lastPrice = getLastPrice(symbol);
-    const parseInput = (value: string | number | null | undefined): number | null => {
-      if (value == null || value === "") {
-        return null;
-      }
-      const numeric = typeof value === "number" ? value : Number(value);
-      return Number.isFinite(numeric) ? numeric : null;
-    };
-
-    const sizeInput = parseInput(data.size);
-    const amountInput = parseInput(data.amountUsd);
-
-    if (mode === "QTY") {
-      if (!sizeInput || sizeInput <= 0) {
-        toast({ title: "Invalid size", description: "Enter a valid position size.", variant: "destructive" });
-        resetPending();
-        return;
-      }
-    } else {
-      if (!amountInput || amountInput <= 0) {
-        toast({ title: "Invalid amount", description: "Enter a valid USDT amount.", variant: "destructive" });
-        resetPending();
-        return;
-      }
-      if (!lastPrice || lastPrice <= 0) {
-        toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
-        resetPending();
-        return;
-      }
-    }
-
-    const orderSide: Side = side === "SHORT" ? "SELL" : "BUY";
-    const payload: QuickTradeRequest = buildQuickTradePayload({
-      symbol,
-      side: orderSide,
-      type: orderType,
-      mode,
-      quantityInput: mode === "QTY" ? sizeInput : null,
-      usdtInput: mode === "USDT" ? amountInput : null,
-      price: lastPrice,
-      lastPrice,
-    });
-
-    if (!payload.quantity || payload.quantity <= 0) {
-      toast({ title: "Invalid quantity", description: "Unable to determine order quantity.", variant: "destructive" });
-      resetPending();
-      return;
-    }
-
-    const usedPrice = payload.price ?? lastPrice ?? null;
-    const derivedQuote = payload.quoteAmount ?? (usedPrice && payload.quantity ? payload.quantity * usedPrice : null);
-    const requiredUsd = typeof derivedQuote === "number" && Number.isFinite(derivedQuote) ? derivedQuote : null;
-    const equity = Number(statsSummary?.equity ?? 0);
-    if (requiredUsd && Number.isFinite(requiredUsd) && Number.isFinite(equity) && requiredUsd > equity) {
-      setHasEquityError(true);
-      toast({
-        title: "Nincs elegendő egyenleg",
-        description: "A szükséges fedezet meghaladja a rendelkezésre álló equity-t.",
-        variant: "destructive",
-      });
-      resetPending();
-      return;
-    }
-
-    setHasEquityError(false);
-    setIsPending(true);
-
-    const requestPayload: QuickTradeRequest = {
-      symbol: payload.symbol,
-      side: payload.side,
-      type: payload.type,
-      quantity: payload.quantity ?? 0,
-      price: payload.type === "LIMIT" ? payload.price ?? null : payload.price ?? null,
-      mode: payload.mode ?? mode,
-      quoteAmount: payload.quoteAmount ?? null,
-      lastPrice: payload.lastPrice ?? lastPrice ?? null,
-    };
-
-    console.log("[QuickTrade] payload", requestPayload);
-
-    try {
-      const resp = await fetch("/api/quick-trade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestPayload),
-      });
-      const dataResp = (await resp
-        .json()
-        .catch(() => null)) as QuickTradeResponse | null;
-      console.log("[QuickTrade] response", resp.status, dataResp);
-
-      if (resp.ok && dataResp?.ok) {
-        notify?.success?.(`Order placed (${dataResp.requestId})`) ?? console.log("Order placed");
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
-          queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
-        ]);
-      } else {
-        const message = dataResp?.message ?? "Order failed";
-        if (message.toLowerCase().includes("insufficient equity")) {
-          setHasEquityError(true);
-          toast({
-            title: 'Nincs elegendő egyenleg',
-            description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
-            variant: 'destructive',
-          });
-          console.error("Order failed - insufficient equity");
-        } else {
-          notify?.error?.(message) ?? console.error("Order failed");
-        }
-      }
-    } catch (err: any) {
-      notify?.error?.(err?.message ?? "Network error") ?? console.error(err);
-    } finally {
-      resetPending();
-    }
-  };
-
-  const onQuickTradeSubmit = async (
-    event?: SyntheticEvent,
-    sideOverride?: 'LONG' | 'SHORT',
-  ) => {
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-
-    if (isPending) {
       return;
     }
 
@@ -308,38 +208,110 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     }
     lastSubmitRef.current = now;
 
-    if (sideOverride) {
-      form.setValue('side', sideOverride);
-      setPendingSide(sideOverride);
+    if (mode === 'QTY') {
+      if (!String(quantity ?? '').trim()) {
+        toast({ title: "Invalid size", description: "Enter a valid position size.", variant: "destructive" });
+        lastSubmitRef.current = 0;
+        return;
+      }
     } else {
-      setPendingSide(form.getValues('side'));
+      if (!String(usdtAmount ?? '').trim()) {
+        toast({ title: "Invalid amount", description: "Enter a valid USDT amount.", variant: "destructive" });
+        lastSubmitRef.current = 0;
+        return;
+      }
+      if (!lastPrice || lastPrice <= 0) {
+        toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
+        lastSubmitRef.current = 0;
+        return;
+      }
     }
 
-    console.log("[QuickTrade] submit clicked");
+    const payload = buildQuickTrade({
+      symbol,
+      side: orderSide,
+      type: orderType,
+      mode,
+      qtyInput: quantity,
+      usdtInput: usdtAmount,
+      price: null,
+      lastPrice,
+      qtyStep: lotStep || 1e-8,
+    });
 
-    if (event) {
-      await form.handleSubmit(handleValidatedSubmit)(event as any);
-    } else {
-      await form.handleSubmit(handleValidatedSubmit)();
+    if (!payload.quantity || payload.quantity <= 0) {
+      toast({ title: "Invalid quantity", description: "Unable to determine order quantity.", variant: "destructive" });
+      lastSubmitRef.current = 0;
+      return;
+    }
+
+    const usedPrice = payload.price ?? lastPrice ?? null;
+    const derivedQuote = payload.quoteAmount ?? (usedPrice && payload.quantity ? payload.quantity * usedPrice : null);
+    const requiredUsd = typeof derivedQuote === 'number' && Number.isFinite(derivedQuote) ? derivedQuote : null;
+    const equity = Number(statsSummary?.equity ?? 0);
+    if (requiredUsd && Number.isFinite(requiredUsd) && Number.isFinite(equity) && requiredUsd > equity) {
+      setHasEquityError(true);
+      toast({
+        title: "Nincs elegendő egyenleg",
+        description: "A szükséges fedezet meghaladja a rendelkezésre álló equity-t.",
+        variant: "destructive",
+      });
+      lastSubmitRef.current = 0;
+      return;
+    }
+
+    setHasEquityError(false);
+    setPending(true);
+    setPendingSide(form.getValues('side'));
+
+    console.log("[QuickTrade] payload", payload);
+
+    try {
+      const resp = await fetch("/api/quick-trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = (await resp.json()) as QuickTradeResponse;
+      console.log("[QuickTrade] response", resp.status, data);
+
+      if (resp.ok && data?.ok) {
+        notify?.success?.(`Order placed (${data.requestId})`) ?? console.log("Order placed");
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
+          queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
+        ]);
+      } else {
+        const messageRaw = data?.message ?? "Order failed";
+        const messageText = typeof messageRaw === 'string' ? messageRaw : String(messageRaw);
+        if (messageText.toLowerCase().includes("insufficient equity")) {
+          setHasEquityError(true);
+          toast({
+            title: 'Nincs elegendő egyenleg',
+            description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
+            variant: 'destructive',
+          });
+          console.error("Order failed - insufficient equity");
+        } else {
+          notify?.error?.(messageText) ?? console.error("Order failed");
+        }
+      }
+    } catch (err: any) {
+      notify?.error?.(err?.message ?? "Network error") ?? console.error(err);
+    } finally {
+      setPending(false);
+      setPendingSide(null);
+      lastSubmitRef.current = 0;
     }
   };
 
   const handleSideClick = (side: 'LONG' | 'SHORT') => {
-    void onQuickTradeSubmit(undefined, side);
+    form.setValue('side', side);
+    void onQuickTradeSubmit();
   };
 
-  const availablePairs = tradingPairs ?? [];
-  const tradingDisabled = availablePairs.length === 0 || !userId;
-  const isFormDisabled = tradingDisabled || isPending;
-  const mode = form.watch('mode') as InputMode;
-  const watchedQty = form.watch('size');
-  const watchedAmount = form.watch('amountUsd');
-  const watchedSymbol = form.watch('symbol');
   const submitDisabled =
-    tradingDisabled ||
-    !watchedSymbol?.toString().trim() ||
-    (!String(watchedQty ?? '').trim() && !String(watchedAmount ?? '').trim()) ||
-    isPending === true;
+    !symbolValue?.toString().trim() || (!String(quantity ?? '').trim() && !String(usdtAmount ?? '').trim()) || pending === true;
 
   useEffect(() => {
     if (mode === 'USDT') {
@@ -359,7 +331,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
   useEffect(() => {
     setHasEquityError(false);
-  }, [mode, watchedQty, watchedAmount]);
+  }, [mode, quantity, usdtAmount]);
 
   return (
     <Card>
@@ -368,7 +340,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={onQuickTradeSubmit} className="space-y-4">
+          <form noValidate onSubmit={onQuickTradeSubmit} className="space-y-4">
             <FormField
               control={form.control}
               name="symbol"
@@ -428,9 +400,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     <FormControl>
                       <Input
                         placeholder="0.01"
-                        type="number"
-                        step="0.00000001"
+                        type="text"
                         inputMode="decimal"
+                        pattern="[0-9]*[.,]?[0-9]*"
                         {...field}
                         data-testid="input-size"
                         disabled={isFormDisabled}
@@ -451,10 +423,9 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     <FormControl>
                       <Input
                         placeholder="100"
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
                         inputMode="decimal"
+                        pattern="[0-9]*[.,]?[0-9]*"
                         {...field}
                         data-testid="input-amount-usd"
                         disabled={isFormDisabled}
@@ -550,7 +521,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 disabled={isFormDisabled}
               >
                 <TrendingUp className="mr-2 h-4 w-4" />
-                {pendingSide === 'LONG' && isPending ? 'Submitting…' : 'Long'}
+                {pendingSide === 'LONG' && pending ? 'Submitting…' : 'Long'}
               </Button>
 
               <Button
@@ -565,7 +536,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                 disabled={isFormDisabled}
               >
                 <TrendingDown className="mr-2 h-4 w-4" />
-                {pendingSide === 'SHORT' && isPending ? 'Submitting…' : 'Short'}
+                {pendingSide === 'SHORT' && pending ? 'Submitting…' : 'Short'}
               </Button>
             </div>
 
@@ -578,7 +549,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
               onClick={onQuickTradeSubmit}
               data-testid="button-place-order"
             >
-              {isPending ? 'Placing Order...' : 'Place Order'}
+              {pending ? 'Placing Order...' : 'Place Order'}
             </Button>
             {hasEquityError && (
               <p className="text-sm text-red-500" role="alert">
