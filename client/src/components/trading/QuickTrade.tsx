@@ -16,6 +16,7 @@ import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTr
 import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
 import type { QuickTradeRequest, QuickTradeResponse } from "@shared/types/trade";
+import { buildQuickTradePayload } from "@/lib/quickTradeCalc";
 
 const tradeFormSchema = z
   .object({
@@ -186,64 +187,71 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       return;
     }
 
-    const price = getLastPrice(symbol);
-    if (!price) {
-      toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
-      resetPending();
-      return;
-    }
-
     const side = data.side;
     const mode = data.mode;
-    let qtyValue: number | null = null;
-    let requiredUsd = 0;
+    const lastPrice = getLastPrice(symbol);
+    const parseInput = (value: string | number | null | undefined): number | null => {
+      if (value == null || value === "") {
+        return null;
+      }
+      const numeric = typeof value === "number" ? value : Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    };
 
-    if (mode === 'QTY') {
-      const size = Number(data.size);
-      if (!Number.isFinite(size) || size <= 0) {
-        toast({ title: 'Invalid size', description: 'Enter a valid position size.', variant: 'destructive' });
+    const sizeInput = parseInput(data.size);
+    const amountInput = parseInput(data.amountUsd);
+
+    if (mode === "QTY") {
+      if (!sizeInput || sizeInput <= 0) {
+        toast({ title: "Invalid size", description: "Enter a valid position size.", variant: "destructive" });
         resetPending();
         return;
       }
-      qtyValue = size;
-      requiredUsd = size * price;
     } else {
-      const amountUsd = Number(data.amountUsd);
-      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-        toast({ title: 'Invalid amount', description: 'Enter a valid USDT amount.', variant: 'destructive' });
+      if (!amountInput || amountInput <= 0) {
+        toast({ title: "Invalid amount", description: "Enter a valid USDT amount.", variant: "destructive" });
         resetPending();
         return;
       }
-      qtyValue = amountUsd / price;
-      requiredUsd = amountUsd;
+      if (!lastPrice || lastPrice <= 0) {
+        toast({ title: "No price", description: "Live price is unavailable for the selected symbol", variant: "destructive" });
+        resetPending();
+        return;
+      }
     }
 
-    if (!qtyValue || qtyValue <= 0) {
-      toast({ title: 'Invalid quantity', description: 'Unable to determine order quantity.', variant: 'destructive' });
+    const orderSide: QuickTradeRequest["side"] = side === "SHORT" ? "SELL" : "BUY";
+    const payload: QuickTradeRequest = buildQuickTradePayload({
+      symbol,
+      side: orderSide,
+      type: "MARKET",
+      mode,
+      quantityInput: mode === "QTY" ? sizeInput : null,
+      usdtInput: mode === "USDT" ? amountInput : null,
+      price: lastPrice,
+      lastPrice,
+    });
+
+    if (!payload.quantity || payload.quantity <= 0) {
+      toast({ title: "Invalid quantity", description: "Unable to determine order quantity.", variant: "destructive" });
       resetPending();
       return;
     }
 
+    const usedPrice = payload.price ?? lastPrice ?? null;
+    const derivedQuote = payload.quoteAmount ?? (usedPrice && payload.quantity ? payload.quantity * usedPrice : null);
+    const requiredUsd = typeof derivedQuote === "number" && Number.isFinite(derivedQuote) ? derivedQuote : null;
     const equity = Number(statsSummary?.equity ?? 0);
-    if (Number.isFinite(equity) && requiredUsd > equity) {
+    if (requiredUsd && Number.isFinite(requiredUsd) && Number.isFinite(equity) && requiredUsd > equity) {
       setHasEquityError(true);
       toast({
-        title: 'Nincs elegendő egyenleg',
-        description: 'A szükséges fedezet meghaladja a rendelkezésre álló equity-t.',
-        variant: 'destructive',
+        title: "Nincs elegendő egyenleg",
+        description: "A szükséges fedezet meghaladja a rendelkezésre álló equity-t.",
+        variant: "destructive",
       });
       resetPending();
       return;
     }
-
-    const quantity = Number(qtyValue.toFixed(8));
-    const orderSide: QuickTradeRequest['side'] = side === 'SHORT' ? 'SELL' : 'BUY';
-    const payload: QuickTradeRequest = {
-      symbol,
-      side: orderSide,
-      quantity,
-      type: 'MARKET',
-    };
 
     setHasEquityError(false);
     mutation.mutate(payload);
