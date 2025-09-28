@@ -158,37 +158,47 @@ export class BinanceService {
   }
 
   async initializeTradingPairs() {
+    let exchangeInfo: ExchangeInfoResponse | null = null;
+
     try {
-      const exchangeInfo = await this.fetchExchangeInfo();
-      const symbolInfoMap = new Map<string, ExchangeInfoSymbol>();
-      exchangeInfo.symbols?.forEach((info) => {
+      exchangeInfo = await this.fetchExchangeInfo();
+    } catch (error) {
+      console.warn("Error fetching exchange info, falling back to static metadata:", error);
+      exchangeInfo = null;
+    }
+
+    const symbolInfoMap = new Map<string, ExchangeInfoSymbol>();
+    exchangeInfo?.symbols?.forEach((info) => {
+      if (info?.symbol) {
         symbolInfoMap.set(info.symbol, info);
-      });
+      }
+    });
 
-      for (const symbol of this.SUPPORTED_PAIRS) {
-        const info = symbolInfoMap.get(symbol);
-        const lotFilter = info?.filters?.find((filter) => filter.filterType === "LOT_SIZE");
-        const priceFilter = info?.filters?.find((filter) => filter.filterType === "PRICE_FILTER");
-        const notionalFilter = info?.filters?.find((filter) => filter.filterType === "MIN_NOTIONAL");
+    for (const symbol of this.SUPPORTED_PAIRS) {
+      const info = symbolInfoMap.get(symbol);
+      const lotFilter = info?.filters?.find((filter) => filter.filterType === "LOT_SIZE");
+      const priceFilter = info?.filters?.find((filter) => filter.filterType === "PRICE_FILTER");
+      const notionalFilter = info?.filters?.find((filter) => filter.filterType === "MIN_NOTIONAL");
 
-        const baseAsset = info?.baseAsset ?? symbol.replace("USDT", "");
-        const quoteAsset = info?.quoteAsset ?? "USDT";
-        const minNotional = notionalFilter?.minNotional ?? null;
-        const minQty = lotFilter?.minQty ?? null;
-        const stepSize = lotFilter?.stepSize ?? null;
-        const tickSize = priceFilter?.tickSize ?? null;
+      const baseAsset = info?.baseAsset ?? symbol.replace("USDT", "");
+      const quoteAsset = info?.quoteAsset ?? "USDT";
+      const minNotional = notionalFilter?.minNotional ?? null;
+      const minQty = lotFilter?.minQty ?? null;
+      const stepSize = lotFilter?.stepSize ?? null;
+      const tickSize = priceFilter?.tickSize ?? null;
 
-        const values = {
-          symbol,
-          baseAsset,
-          quoteAsset,
-          isActive: true,
-          minNotional: minNotional ? String(minNotional) : null,
-          minQty: minQty ? String(minQty) : null,
-          stepSize: stepSize ? String(stepSize) : null,
-          tickSize: tickSize ? String(tickSize) : null,
-        } as any;
+      const values = {
+        symbol,
+        baseAsset,
+        quoteAsset,
+        isActive: true,
+        minNotional: minNotional ? String(minNotional) : null,
+        minQty: minQty ? String(minQty) : null,
+        stepSize: stepSize ? String(stepSize) : null,
+        tickSize: tickSize ? String(tickSize) : null,
+      } as any;
 
+      try {
         await db
           .insert(tradingPairs)
           .values(values)
@@ -204,9 +214,9 @@ export class BinanceService {
               tickSize: values.tickSize,
             },
           });
+      } catch (error) {
+        console.error(`Error upserting trading pair ${symbol}:`, error);
       }
-    } catch (error) {
-      console.error("Error initializing trading pairs:", error);
     }
   }
 
