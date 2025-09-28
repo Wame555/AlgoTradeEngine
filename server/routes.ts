@@ -116,6 +116,9 @@ function runUserSettingsGuard(): Promise<void> {
 }
 
 const userSettingsGuardBootstrap = runUserSettingsGuard();
+userSettingsGuardBootstrap.catch(() => {
+  /* handled elsewhere when awaited */
+});
 
 const DEFAULT_USER_SETTINGS = {
   isTestnet: true,
