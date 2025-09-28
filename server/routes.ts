@@ -98,7 +98,7 @@ const DDL_GUARD_QUERIES: string[] = [
   `,
 ];
 
-const SUP = new Set(SUPPORTED_TIMEFRAMES);
+const SUP = new Set<string>(SUPPORTED_TIMEFRAMES);
 
 function runUserSettingsGuard(): Promise<void> {
   if (!userSettingsGuardPromise) {

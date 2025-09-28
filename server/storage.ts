@@ -14,6 +14,7 @@ import {
   type TradingPair,
   type User,
   type UserSettings,
+  type InsertUserSettings,
   type IndicatorConfig,
   type InsertIndicatorConfig,
   type Position,
@@ -31,8 +32,17 @@ import * as positionsRepo from "./db/positionsRepo";
 import { resolveIndicatorType } from "./utils/indicatorConfigs";
 
 export type InsertUser = Omit<User, "id" | "createdAt"> & { password?: string };
-export type InsertUserSettings = Omit<UserSettings, "id" | "createdAt" | "updatedAt"> & { userId: string };
 export type InsertUserPairSetting = { userId: string; symbol: string; activeTimeframes: string[] };
+
+export type UserSettingsUpsertInput = Partial<InsertUserSettings> & { userId: string };
+
+type MarketDataInsert = typeof marketData.$inferInsert;
+
+export type MarketDataUpsertInput = {
+  symbol: MarketDataInsert["symbol"];
+  timeframe: MarketDataInsert["timeframe"];
+  ts: MarketDataInsert["ts"];
+} & Partial<Omit<MarketDataInsert, "id" | "symbol" | "timeframe" | "ts">>;
 
 export interface ClosedPositionSummary extends ClosedPosition {
   pnlPct: number;
@@ -64,7 +74,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   getUserSettings(userId: string): Promise<UserSettings | undefined>;
-  upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
+  upsertUserSettings(settings: UserSettingsUpsertInput): Promise<UserSettings>;
 
   getAllTradingPairs(): Promise<TradingPair[]>;
   getTradingPair(symbol: string): Promise<TradingPair | undefined>;
@@ -105,7 +115,7 @@ export interface IStorage {
   upsertUserPairSettings(setting: InsertUserPairSetting): Promise<UserPairSetting>;
 
   getMarketData(symbols?: string[]): Promise<MarketData[]>;
-  updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void>;
+  updateMarketData(data: MarketDataUpsertInput): Promise<void>;
 }
 
 function mapPositionRow(row: Record<string, any>): Position {
@@ -131,6 +141,10 @@ function mapPositionRow(row: Record<string, any>): Position {
     status: row.status,
     orderId: row.order_id ?? undefined,
     requestId: row.request_id ?? undefined,
+    source: row.source ?? null,
+    orderType: row.order_type ?? null,
+    price: row.price ?? null,
+    quantity: row.quantity ?? null,
     openedAt: row.opened_at,
     updatedAt: row.updated_at ?? undefined,
     closedAt: row.closed_at ?? undefined,
@@ -189,7 +203,7 @@ export class DatabaseStorage implements IStorage {
     return settings;
   }
 
-  async upsertUserSettings(settings: InsertUserSettings): Promise<UserSettings> {
+  async upsertUserSettings(settings: UserSettingsUpsertInput): Promise<UserSettings> {
     const now = new Date();
 
     const columnMap: Record<keyof UserSettingsInsert, string> = {
@@ -211,26 +225,35 @@ export class DatabaseStorage implements IStorage {
       initialBalance: "initial_balance",
     };
 
-    const insertPayload = {
-      ...pruneUndefined(settings),
+    const insertBase = pruneUndefined({
+      ...settings,
+      userId: settings.userId,
       updatedAt: now,
-    } as UserSettingsInsert;
+    }) as Partial<UserSettingsInsert>;
+
+    if (!insertBase.userId) {
+      throw new Error("userId is required for user settings upsert");
+    }
+
+    const insertEntries = Object.entries(insertBase) as Array<[keyof UserSettingsInsert, unknown]>;
+
     const updatePayload = pruneUndefined({ ...settings }) as Partial<UserSettingsInsert>;
     delete (updatePayload as Record<string, unknown>).userId;
+    delete (updatePayload as Record<string, unknown>).createdAt;
 
-    const insertColumns = Object.keys(insertPayload).map((key) => columnMap[key as keyof UserSettingsInsert]);
-    const insertValues = Object.values(insertPayload);
+    const insertColumnsSql = sql.join(
+      insertEntries.map(([key]) => sql.identifier(columnMap[key])),
+      sql`, `,
+    );
+    const insertValuesSql = sql.join(
+      insertEntries.map(([, value]) => sql`${value}`),
+      sql`, `,
+    );
 
     const updateAssignments = Object.entries(updatePayload)
       .filter(([key]) => key !== "userId")
       .map(([key, value]) => sql`${sql.identifier(columnMap[key as keyof UserSettingsInsert])} = ${value}`);
     updateAssignments.push(sql`${sql.identifier(columnMap.updatedAt)} = ${now}`);
-
-    const insertColumnsSql = sql.join(
-      insertColumns.map((column) => sql.identifier(column)),
-      sql`, `,
-    );
-    const insertValuesSql = sql.join(insertValues.map((value) => sql`${value}`), sql`, `);
     const updateSetSql = sql.join(updateAssignments, sql`, `);
 
     try {
@@ -247,8 +270,7 @@ export class DatabaseStorage implements IStorage {
       return result.rows[0]!;
     } catch (error) {
       console.warn("[storage.upsertUserSettings] failed", {
-        insertColumns,
-        insertValues,
+        insertKeys: insertEntries.map(([key]) => key),
         updateAssignmentsCount: updateAssignments.length,
       });
       throw error;
@@ -355,10 +377,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePosition(id: string, updates: Partial<Position>): Promise<Position> {
-    const payload: Partial<typeof positions.$inferInsert> = {
+    const payload = {
       ...updates,
       updatedAt: new Date(),
-    };
+    } as positionsRepo.UpdatePositionInput;
     const row = await positionsRepo.updatePosition(id, payload);
     if (!row) {
       throw new Error(`Position ${id} not found`);
@@ -370,7 +392,7 @@ export class DatabaseStorage implements IStorage {
     id: string,
     updates: { closePrice?: string; pnl?: string } = {},
   ): Promise<Position> {
-    const updateData: Partial<typeof positions.$inferInsert> = {
+    const updateData: positionsRepo.UpdatePositionInput = {
       status: "CLOSED",
       closedAt: new Date(),
       updatedAt: new Date(),
@@ -401,7 +423,7 @@ export class DatabaseStorage implements IStorage {
     for (const row of openRows) {
       const position = mapPositionRow(row);
       const updates = computeUpdates ? computeUpdates(position) : {};
-      const updateData: Partial<typeof positions.$inferInsert> = {
+      const updateData: positionsRepo.UpdatePositionInput = {
         status: "CLOSED",
         closedAt: new Date(),
         updatedAt: new Date(),
@@ -530,7 +552,7 @@ export class DatabaseStorage implements IStorage {
 
     const result = await db.execute(sql`
       INSERT INTO public."user_pair_settings" ("user_id", "symbol", "active_timeframes", "updated_at")
-      VALUES (${setting.userId}, ${setting.symbol}, ${sql.array(active, "text")}, NOW())
+      VALUES (${setting.userId}, ${setting.symbol}, ${active}, NOW())
       ON CONFLICT ON CONSTRAINT user_pair_settings_user_symbol_uniq
       DO UPDATE SET "active_timeframes" = EXCLUDED."active_timeframes", "updated_at" = NOW()
       RETURNING *;
@@ -556,14 +578,69 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(marketData).orderBy(marketData.symbol);
   }
 
-  async updateMarketData(data: Partial<MarketData> & { symbol: string }): Promise<void> {
-    await db
-      .insert(marketData)
-      .values(data as any)
-      .onConflictDoUpdate({
-        target: marketData.symbolTimeframeTsUnique,
-        set: data as any,
-      });
+  async updateMarketData(data: MarketDataUpsertInput): Promise<void> {
+    const columnMap = {
+      symbol: "symbol",
+      timeframe: "timeframe",
+      ts: "ts",
+      open: "open",
+      high: "high",
+      low: "low",
+      close: "close",
+      volume: "volume",
+    } as const satisfies Record<keyof Omit<MarketDataInsert, "id">, string>;
+
+    type ColumnKey = keyof typeof columnMap;
+
+    const basePayload = pruneUndefined({
+      symbol: data.symbol,
+      timeframe: data.timeframe,
+      ts: data.ts,
+      open: data.open,
+      high: data.high,
+      low: data.low,
+      close: data.close,
+      volume: data.volume,
+    }) as Partial<Omit<MarketDataInsert, "id">>;
+
+    const entries = Object.entries(basePayload) as Array<[ColumnKey, unknown]>;
+
+    if (entries.length === 0) {
+      return;
+    }
+
+    const insertColumnsSql = sql.join(
+      entries.map(([key]) => sql.identifier(columnMap[key])),
+      sql`, `,
+    );
+    const insertValuesSql = sql.join(entries.map(([, value]) => sql`${value}`), sql`, `);
+
+    const updateSqlFragments = entries
+      .filter(([key]) => key !== "symbol" && key !== "timeframe" && key !== "ts")
+      .map(([key]) =>
+        sql`${sql.identifier(columnMap[key])} = EXCLUDED.${sql.identifier(columnMap[key])}`,
+      );
+
+    if (updateSqlFragments.length === 0) {
+      await db.execute(
+        sql`
+          INSERT INTO public."market_data" (${insertColumnsSql})
+          VALUES (${insertValuesSql})
+          ON CONFLICT ON CONSTRAINT market_data_symbol_timeframe_ts_uniq
+          DO NOTHING;
+        `,
+      );
+      return;
+    }
+
+    await db.execute(
+      sql`
+        INSERT INTO public."market_data" (${insertColumnsSql})
+        VALUES (${insertValuesSql})
+        ON CONFLICT ON CONSTRAINT market_data_symbol_timeframe_ts_uniq
+        DO UPDATE SET ${sql.join(updateSqlFragments, sql`, `)};
+      `,
+    );
   }
 }
 
