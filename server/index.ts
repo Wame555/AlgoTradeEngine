@@ -15,6 +15,7 @@ import { setLastPrice as setMarketLastPrice } from "./state/marketCache";
 import { bootstrapMarketCaches } from "./services/cacheBootstrap";
 import { CONFIGURED_SYMBOLS } from "./config/symbols";
 import { SUPPORTED_TIMEFRAMES } from "@shared/types";
+import { serveStatic, setupVite } from "./vite";
 
 const app = express();
 
@@ -87,6 +88,9 @@ const telegramService = new TelegramService();
 const configuredSymbols = Array.from(CONFIGURED_SYMBOLS);
 const supportedTimeframes = Array.from(SUPPORTED_TIMEFRAMES);
 
+const isProduction = process.env.NODE_ENV === "production";
+const isTest = process.env.NODE_ENV === "test";
+
 registerRoutes(app, {
   broker,
   binanceService,
@@ -97,6 +101,19 @@ registerRoutes(app, {
 
 app.use("/api", quickTradeRouter);
 app.use("/api", marketsRouter);
+
+if (isProduction) {
+  try {
+    serveStatic(app);
+  } catch (error) {
+    console.warn("[static] failed to configure static assets", error);
+  }
+} else if (!isTest) {
+  void setupVite(app, httpServer).catch((error) => {
+    console.error("[vite] failed to initialise development server", error);
+    process.exit(1);
+  });
+}
 
 app.use((req, res) => {
   console.warn(`[404] ${req.method} ${req.originalUrl}`);
