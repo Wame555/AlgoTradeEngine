@@ -91,6 +91,13 @@ const supportedTimeframes = Array.from(SUPPORTED_TIMEFRAMES);
 const isProduction = process.env.NODE_ENV === "production";
 const isTest = process.env.NODE_ENV === "test";
 
+const registerNotFoundHandler = (application: express.Express) => {
+  application.use((req, res) => {
+    console.warn(`[404] ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ ok: false, message: "Not Found" });
+  });
+};
+
 registerRoutes(app, {
   broker,
   binanceService,
@@ -108,17 +115,19 @@ if (isProduction) {
   } catch (error) {
     console.warn("[static] failed to configure static assets", error);
   }
+  registerNotFoundHandler(app);
 } else if (!isTest) {
-  void setupVite(app, httpServer).catch((error) => {
+  void setupVite(app, httpServer)
+    .then(() => {
+      registerNotFoundHandler(app);
+    })
+    .catch((error) => {
     console.error("[vite] failed to initialise development server", error);
     process.exit(1);
   });
+} else {
+  registerNotFoundHandler(app);
 }
-
-app.use((req, res) => {
-  console.warn(`[404] ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ ok: false, message: "Not Found" });
-});
 
 async function initializeServices(): Promise<void> {
   try {
