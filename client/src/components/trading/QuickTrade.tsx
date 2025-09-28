@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTradingPairs, useUserSettings, useStatsSummary } from "@/hooks/useTradingData";
 import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
+import type { QuickTradeRequest, QuickTradeResponse } from "@shared/types/trade";
 
 const tradeFormSchema = z
   .object({
@@ -113,42 +114,42 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
     return Number.isFinite(price) ? price : null;
   };
 
-  const mutation = useMutation({
-    mutationFn: async (payload: Record<string, unknown>) => {
-      const response = await fetch('/api/positions', {
+  const mutation = useMutation<QuickTradeResponse, Error, QuickTradeRequest>({
+    mutationFn: async (payload) => {
+      const response = await fetch('/api/quick-trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         credentials: 'include',
       });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const error = new Error(
-          (data as { message?: string } | null)?.message || response.statusText || 'Failed to open position',
-        );
-        (error as any).code = (data as { code?: string } | null)?.code;
+      const data = (await response.json().catch(() => null)) as QuickTradeResponse | null;
+
+      if (!response.ok || !data?.ok) {
+        const message = data?.message || response.statusText || 'Failed to place order';
+        const error = new Error(message);
         throw error;
       }
+
       return data;
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       setPendingSide(null);
       setHasEquityError(false);
       toast({
         title: "Success",
-        description: "Position opened successfully",
+        description: `Order placed (requestId=${data.requestId})`,
       });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['/api/positions/open'] }),
         queryClient.invalidateQueries({ queryKey: ['/api/stats/summary'] }),
       ]);
     },
-    onError: (error: any) => {
+    onError: (error) => {
       setPendingSide(null);
-      const message = typeof error?.message === 'string' ? error.message : 'Failed to open position';
-      const code = (error as { code?: string } | undefined)?.code;
+      setHasEquityError(false);
+      const message = typeof error?.message === 'string' ? error.message : 'Failed to place order';
 
-      if (code === 'INSUFFICIENT_EQUITY' || message.toLowerCase().includes('insufficient equity')) {
+      if (message.toLowerCase().includes('insufficient equity')) {
         setHasEquityError(true);
         toast({
           title: 'Nincs elegendő egyenleg',
@@ -160,7 +161,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
 
       toast({
         title: 'Error',
-        description: message || 'Failed to open position',
+        description: message || 'Failed to place order',
         variant: 'destructive',
       });
     },
@@ -235,37 +236,14 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
       return;
     }
 
-    const qtyFormatted = qtyValue.toFixed(8);
-    const payload: Record<string, unknown> = {
+    const quantity = Number(qtyValue.toFixed(8));
+    const orderSide: QuickTradeRequest['side'] = side === 'SHORT' ? 'SELL' : 'BUY';
+    const payload: QuickTradeRequest = {
       symbol,
-      side,
-      qty: qtyFormatted,
-      requestId: crypto.randomUUID(),
+      side: orderSide,
+      quantity,
+      type: 'MARKET',
     };
-
-    const leverageValue = Number(data.leverage);
-    if (Number.isFinite(leverageValue) && leverageValue > 0) {
-      payload.leverage = leverageValue;
-    }
-
-    const tpPercent = Number(data.takeProfit);
-    if (Number.isFinite(tpPercent) && tpPercent > 0) {
-      const tpMultiplier = tpPercent / 100;
-      const tpPrice = side === 'LONG' ? price * (1 + tpMultiplier) : price * (1 - tpMultiplier);
-      if (Number.isFinite(tpPrice) && tpPrice > 0) {
-        payload.tpPrice = Number(tpPrice.toFixed(8));
-      }
-    }
-
-    const slPercent = Number(data.stopLoss);
-    if (Number.isFinite(slPercent) && slPercent > 0) {
-      const slMultiplier = slPercent / 100;
-      let slPrice = side === 'LONG' ? price * (1 - slMultiplier) : price * (1 + slMultiplier);
-      slPrice = Math.max(slPrice, 0.00000001);
-      if (Number.isFinite(slPrice) && slPrice > 0) {
-        payload.slPrice = Number(slPrice.toFixed(8));
-      }
-    }
 
     setHasEquityError(false);
     mutation.mutate(payload);
