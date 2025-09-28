@@ -90,7 +90,13 @@ if (shouldLogRequests) {
     app.use(requestLogger);
 }
 app.use(express.json());
-app.use(quickTradeRouter);
+
+app.use((req, _res, next) => {
+    console.log(`[req] ${req.method} ${req.originalUrl}`);
+    next();
+});
+
+app.use("/api", quickTradeRouter);
 
 app.get("/healthz", async (_req, res) => {
     let dbHealthy = false;

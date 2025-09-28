@@ -31,7 +31,8 @@ function roundToStep(v: number, step = 1e-8): number {
   return Math.floor(v * inv + 1e-9) / inv;
 }
 
-router.post("/api/quick-trade", async (req, res) => {
+router.post("/quick-trade", async (req, res) => {
+  console.log("[quick-trade] inbound");
   const b = (req?.body ?? {}) as Partial<QuickTradeRequest>;
 
   const symbol = typeof b.symbol === "string" && b.symbol.trim() ? b.symbol.trim() : null;
@@ -44,7 +45,7 @@ router.post("/api/quick-trade", async (req, res) => {
   const quoteIn = b.quoteAmount == null ? null : toNum(b.quoteAmount);
   const mode = isMode(b.mode) ? b.mode : null;
 
-  console.log("[quick-trade] inbound:", {
+  console.log("[quick-trade] payload:", {
     symbol,
     side,
     type,
