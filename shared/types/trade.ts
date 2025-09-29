@@ -27,4 +27,5 @@ export interface QuickTradeResponse {
   quantity?: number | null;
   price?: number | null;
   quoteAmount?: number | null;
+  error?: string | null;
 }

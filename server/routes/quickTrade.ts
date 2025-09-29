@@ -2,6 +2,11 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import type { QuickTradeRequest, QuickTradeResponse, Side, OrderType, InputMode } from "../../shared/types/trade";
 import { placeOrder } from "../services/orders";
+import Decimal from "decimal.js";
+import { storage } from "../storage";
+import { db } from "../db";
+import { users } from "@shared/schema";
+import { getAccountSnapshot } from "../state/accountSnapshot";
 
 const router = Router();
 
@@ -9,17 +14,9 @@ const isSide = (x: any): x is Side => x === "BUY" || x === "SELL";
 const isType = (x: any): x is OrderType => x === "MARKET" || x === "LIMIT";
 const isMode = (x: any): x is InputMode => x === "USDT" || x === "QTY";
 
-function toNumLocale(input: unknown): number | null {
-  if (typeof input === "number" && Number.isFinite(input)) return input;
-  if (typeof input !== "string") return null;
-  let s = input.trim();
-  if (!s) return null;
-  s = s.replace(/\u00A0/g, " ").replace(/\s+/g, "");
-  if (s.includes(",") && s.includes(".")) s = s.replace(/,/g, "");
-  else if (s.includes(",") && !s.includes(".")) s = s.replace(/,/g, ".");
-  if (!/^[+-]?\d*(?:\.\d+)?$/.test(s)) return null;
-  const v = Number(s);
-  return Number.isFinite(v) ? v : null;
+function toNumLocale(input: any): number {
+  const n = Number(input);
+  return Number.isFinite(n) ? n : 0;
 }
 
 router.post("/quick-trade", async (req, res) => {
@@ -62,6 +59,53 @@ router.post("/quick-trade", async (req, res) => {
     return res.status(400).json(<QuickTradeResponse>{
       ok: false, message: "Quantity is required (direct or derived).", requestId: "", ts: new Date().toISOString(),
     });
+  }
+
+  // Compute equity and validate available balance
+  try {
+    // Determine current account equity
+    let userId: string | undefined;
+    const [user] = await db.select({ id: users.id }).from(users).limit(1);
+    if (user) {
+      userId = user.id;
+    }
+    const settings = userId ? await storage.getUserSettings(userId) : undefined;
+    const snapshot = getAccountSnapshot();
+    const totalBalanceDecimal = snapshot
+      ? new Decimal(snapshot.totalBalance)
+      : new Decimal(settings?.totalBalance ?? settings?.initialBalance ?? 0);
+    const equityDecimal = snapshot?.equity != null ? new Decimal(snapshot.equity) : totalBalanceDecimal;
+    if (mode === "USDT") {
+      const quoteDecimal = new Decimal(quoteIn ?? 0);
+      console.log(`[trade] parsed quantity: ${qty} ${symbol} from ${quoteDecimal.toNumber()} USDT @ $${usedPrice}`);
+      if (quoteDecimal.gt(equityDecimal)) {
+        console.warn(`[trade] insufficient equity: require ${quoteDecimal.toNumber()} USDT, have ${equityDecimal.toNumber()} USDT`);
+        return res.status(400).json(<QuickTradeResponse>{
+          ok: false,
+          error: "Insufficient equity",
+          message: "Insufficient equity",
+          requestId: "",
+          ts: new Date().toISOString(),
+        });
+      }
+    } else {
+      const usedPx = new Decimal(usedPrice ?? 0);
+      const qtyDecimal = new Decimal(qty);
+      const costDecimal = qtyDecimal.times(usedPx);
+      console.log(`[trade] parsed cost: ${costDecimal.toNumber()} USDT for ${qty} ${symbol} @ $${usedPx.toNumber()}`);
+      if (costDecimal.gt(equityDecimal)) {
+        console.warn(`[trade] insufficient equity: require ${costDecimal.toNumber()} USDT, have ${equityDecimal.toNumber()} USDT`);
+        return res.status(400).json(<QuickTradeResponse>{
+          ok: false,
+          error: "Insufficient equity",
+          message: "Insufficient equity",
+          requestId: "",
+          ts: new Date().toISOString(),
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[trade] equity validation error:", err);
   }
 
   const requestId = (typeof b.requestId === "string" && b.requestId) || crypto.randomUUID?.() || crypto.randomBytes(16).toString("hex");
