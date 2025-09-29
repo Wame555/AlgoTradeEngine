@@ -3,6 +3,7 @@ import { createServer } from "http";
 import quickTradeRouter from "./routes/quickTrade";
 import marketsRouter from "./routes/markets";
 import accountRouter from "./routes/account";
+import sessionRouter from "./routes/session";
 import { ensureRuntimePrereqs } from "./bootstrap/dbEnsure";
 import { setupVite, serveStatic } from "./vite";
 
@@ -47,6 +48,7 @@ app.get("/healthz", (_req, res) => res.status(200).send("ok"));
   }
 
   // API mount (router paths are WITHOUT '/api' prefix)
+  app.use("/api", sessionRouter);
   app.use("/api", accountRouter);
   app.use("/api", quickTradeRouter);
   app.use("/api", marketsRouter);
