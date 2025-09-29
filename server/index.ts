@@ -23,7 +23,7 @@ const PORT = Number(process.env.PORT || 5000);
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 
 function createBroadcast(server: Server) {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, path: "/ws" });
   const clients = new Set<WebSocket>();
 
   wss.on("connection", (socket) => {
