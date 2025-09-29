@@ -13,9 +13,30 @@ import { useSession, useUserId } from '@/hooks/useSession';
 import { useOpenPositions } from '@/hooks/useOpenPositions';
 
 export function useTradingPairs() {
-  return useQuery<TradingPair[]>({
+  return useQuery<unknown, Error, TradingPair[]>({
     queryKey: ['/api/pairs'],
     staleTime: 5 * 60 * 1000,
+    select: (result) => {
+      if (Array.isArray(result)) {
+        return result.filter((item): item is TradingPair =>
+          item != null && typeof item === 'object' && 'symbol' in item,
+        );
+      }
+
+      if (
+        result &&
+        typeof result === 'object' &&
+        'items' in result &&
+        Array.isArray((result as { items: unknown[] }).items)
+      ) {
+        return (result as { items: unknown[] }).items.filter((item): item is TradingPair =>
+          item != null && typeof item === 'object' && 'symbol' in item,
+        );
+      }
+
+      return [];
+    },
+    initialData: [],
   });
 }
 
