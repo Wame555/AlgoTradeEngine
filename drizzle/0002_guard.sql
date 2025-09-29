@@ -43,16 +43,29 @@ BEGIN
 END
 $$;
 
--- Ensure the unique index on (symbol, timeframe) exists
+-- Ensure the unique constraint on (symbol, timeframe) exists
 DO $$
 BEGIN
-    IF NOT EXISTS (
+    IF EXISTS (
         SELECT 1
         FROM pg_indexes
         WHERE schemaname = 'public'
           AND indexname = 'pair_timeframes_symbol_timeframe_unique'
     ) THEN
-        EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS pair_timeframes_symbol_timeframe_unique ON public."pair_timeframes" ("symbol", "timeframe")';
+        EXECUTE 'DROP INDEX public.pair_timeframes_symbol_timeframe_unique';
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'pair_timeframes_symbol_timeframe_uniq'
+          AND conrelid = 'public.pair_timeframes'::regclass
+    ) THEN
+        EXECUTE 'ALTER TABLE public."pair_timeframes" ADD CONSTRAINT pair_timeframes_symbol_timeframe_uniq UNIQUE ("symbol", "timeframe")';
     END IF;
 END
 $$;

@@ -11,8 +11,8 @@ import {
   serial,
   text,
   timestamp,
-  uniqueIndex,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -190,7 +190,7 @@ export const pairTimeframes = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => ({
-    symbolTimeframeUnique: uniqueIndex("pair_timeframes_symbol_timeframe_unique").on(
+    symbolTimeframeUnique: unique("pair_timeframes_symbol_timeframe_uniq").on(
       table.symbol,
       table.timeframe,
     ),
