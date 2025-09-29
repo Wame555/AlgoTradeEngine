@@ -2,12 +2,7 @@
 
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexname = 'trading_pairs_symbol_unique'
-  ) THEN
+  IF to_regclass('public.trading_pairs_symbol_unique') IS NOT NULL THEN
     EXECUTE 'DROP INDEX public.trading_pairs_symbol_unique';
   END IF;
 END
@@ -43,12 +38,7 @@ $$;
 
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexname = 'pair_timeframes_symbol_timeframe_unique'
-  ) THEN
+  IF to_regclass('public.pair_timeframes_symbol_timeframe_unique') IS NOT NULL THEN
     EXECUTE 'DROP INDEX public.pair_timeframes_symbol_timeframe_unique';
   END IF;
 END
