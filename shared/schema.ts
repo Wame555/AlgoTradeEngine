@@ -151,6 +151,11 @@ export const closedPositions = pgTable(
     exitPrice: numeric("exit_price", { precision: 18, scale: 8 }).notNull(),
     feeUsd: numeric("fee_usd", { precision: 18, scale: 8 }).notNull().default("0"),
     pnlUsd: numeric("pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+    pl: numeric("pl", { precision: 18, scale: 8 }),
+    fee: numeric("fee", { precision: 18, scale: 8 }),
+    durationMin: integer("duration_min"),
+    strategy: text("strategy"),
+    notes: text("notes"),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
     closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
   },
@@ -209,6 +214,17 @@ export const userPairSettings = pgTable(
     userIdx: index("idx_user_pair_settings_user").on(table.userId),
     symbolIdx: index("idx_user_pair_settings_symbol").on(table.symbol),
   }),
+);
+
+
+export const systemState = pgTable(
+  "system_state",
+  {
+    id: integer("id").primaryKey().default(1),
+    totalBalance: numeric("total_balance", { precision: 18, scale: 8 }).notNull(),
+    equity: numeric("equity", { precision: 18, scale: 8 }).notNull(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
 );
 
 // Market data cache

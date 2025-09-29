@@ -1,5 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 
 export interface AccountSnapshotState {
   totalBalance: number;
@@ -37,43 +39,31 @@ export async function loadAccountSnapshotFromDisk(): Promise<AccountSnapshotStat
       totalBalance: data.totalBalance,
       equity: isFiniteNumber(data.equity) ? data.equity : undefined,
       openPnL: isFiniteNumber(data.openPnL) ? data.openPnL : undefined,
-      updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
-    snapshot = result;
     return result;
-  } catch (error: any) {
-    if (error && error.code === "ENOENT") {
-      return null;
-    }
-    console.warn(
-      `[accountSnapshot] failed to load snapshot: ${(error as Error).message ?? error}`,
-    );
+  } catch (error) {
     return null;
   }
 }
 
-async function persistSnapshot(): Promise<void> {
-  if (!snapshot) {
-    return;
-  }
+export async function loadAccountSnapshotFromDB(): Promise<AccountSnapshotState | null> {
   try {
-    await ensureSnapshotDir();
-    await fs.writeFile(SNAPSHOT_FILE, serialize(snapshot), "utf8");
+    const result = await db.execute(sql`SELECT "total_balance", "equity" FROM public."system_state" WHERE id = 1;`);
+    const rows = (result as any).rows;
+    if (rows?.length) {
+      const totalBalance = Number(rows[0].total_balance) || 0;
+      const equity = Number(rows[0].equity) || totalBalance;
+      return {
+        totalBalance,
+        equity,
+        updatedAt: new Date().toISOString(),
+      };
+    }
   } catch (error) {
-    console.warn(
-      `[accountSnapshot] failed to persist snapshot: ${(error as Error).message ?? error}`,
-    );
+    console.warn(`[accountSnapshot] failed to load snapshot from DB: ${(error as Error).message ?? error}`);
   }
-}
-
-function schedulePersist(): void {
-  if (writeTimer) {
-    return;
-  }
-  writeTimer = setTimeout(() => {
-    writeTimer = null;
-    void persistSnapshot();
-  }, 1000);
+  return null;
 }
 
 export function updateAccountSnapshot(data: Partial<AccountSnapshotState>): void {
@@ -100,6 +90,41 @@ export function updateAccountSnapshot(data: Partial<AccountSnapshotState>): void
 export function getAccountSnapshot(): AccountSnapshotState | null {
   return snapshot;
 }
+
+async function persistSnapshot(): Promise<void> {
+  if (!snapshot) {
+    return;
+  }
+  try {
+    await ensureSnapshotDir();
+    await fs.writeFile(SNAPSHOT_FILE, serialize(snapshot), "utf8");
+    await db.execute(sql`
+      INSERT INTO public."system_state" (id, total_balance, equity, updated_at)
+      VALUES (1, ${snapshot.totalBalance}, ${snapshot.equity ?? snapshot.totalBalance}, now())
+      ON CONFLICT ON CONSTRAINT system_state_pkey
+      DO UPDATE SET total_balance = EXCLUDED.total_balance, equity = EXCLUDED.equity, updated_at = EXCLUDED.updated_at;
+    `);
+  } catch (error) {
+    console.warn(
+      `[accountSnapshot] failed to persist snapshot: ${(error as Error).message ?? error}`,
+    );
+  }
+}
+
+function schedulePersist(): void {
+  if (writeTimer) {
+    return;
+  }
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    void persistSnapshot();
+  }, 1000);
+}
+
+// Automatically persist to database every 10 seconds
+setInterval(() => {
+  void persistSnapshot();
+}, 10000);
 
 export function resetAccountSnapshot(): void {
   snapshot = null;

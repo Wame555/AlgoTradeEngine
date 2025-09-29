@@ -10,6 +10,10 @@ import { PaperBroker } from "./paper/PaperBroker";
 import { BinanceService, type PriceData } from "./services/binanceService";
 import { IndicatorService } from "./services/indicatorService";
 import { TelegramService } from "./services/telegramService";
+import { loadAccountSnapshotFromDB, updateAccountSnapshot } from "./state/accountSnapshot";
+import { db } from "./db";
+import { paperAccounts } from "@shared/schemaPaper";
+import { eq } from "drizzle-orm";
 import { setLastPrice as setPaperLastPrice } from "./paper/PriceFeed";
 import { setLastPrice as setMarketLastPrice } from "./state/marketCache";
 import { bootstrapMarketCaches } from "./services/cacheBootstrap";
@@ -82,6 +86,30 @@ wss.on("connection", (socket) => {
 });
 
 const broker = new PaperBroker();
+
+loadAccountSnapshotFromDB()
+  .then(async (snapshot) => {
+    if (!snapshot) {
+      return;
+    }
+    updateAccountSnapshot({ totalBalance: snapshot.totalBalance, equity: snapshot.equity });
+    try {
+      const [account] = await db.select().from(paperAccounts).limit(1);
+      if (account) {
+        await db
+          .update(paperAccounts)
+          .set({ balance: snapshot.totalBalance.toString() })
+          .where(eq(paperAccounts.id, account.id));
+      } else {
+        await db.insert(paperAccounts).values({ balance: snapshot.totalBalance.toString() });
+      }
+    } catch (error) {
+      console.warn(`[account] failed to restore paper balance: ${(error as Error).message ?? error}`);
+    }
+  })
+  .catch((error) => {
+    console.warn(`[account] failed to load persisted snapshot: ${(error as Error).message ?? error}`);
+  });
 const binanceService = new BinanceService();
 const indicatorService = new IndicatorService();
 const telegramService = new TelegramService();

@@ -42,183 +42,71 @@ BEGIN
       ALTER TABLE public."indicator_configs" RENAME COLUMN "updated_at" TO "created_at";
     END IF;
   END IF;
-END$$;
+END $$;
 
-ALTER TABLE public."indicator_configs" ADD COLUMN IF NOT EXISTS "user_id" varchar;
+ALTER TABLE public."indicator_configs" ADD COLUMN IF NOT EXISTS "user_id" uuid;
 ALTER TABLE public."indicator_configs" ADD COLUMN IF NOT EXISTS "payload" jsonb DEFAULT '{}'::jsonb;
 ALTER TABLE public."indicator_configs" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT now();
 
 DO $$
 DECLARE
-  default_user_id varchar;
+  default_user_id uuid;
+  default_username text := COALESCE(NULLIF(current_setting('algo.default_user', true), ''), 'demo');
+  default_password text := COALESCE(NULLIF(current_setting('algo.default_password', true), ''), 'demo');
 BEGIN
-  SELECT id INTO default_user_id FROM public."users" ORDER BY created_at LIMIT 1;
-
-  IF default_user_id IS NULL THEN
-    default_user_id := gen_random_uuid();
-    INSERT INTO public."users" (id, username, password) VALUES (default_user_id, 'demo', 'demo')
-    ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
+  SELECT id INTO default_user_id FROM public."users" WHERE "username" = default_username LIMIT 1;
+  IF NOT FOUND THEN
+    INSERT INTO public."users" ("id", "username", "password", "created_at")
+    VALUES (gen_random_uuid(), default_username, default_password, now())
+    ON CONFLICT ON CONSTRAINT users_username_uniq DO UPDATE SET password = EXCLUDED.password
+    RETURNING id INTO default_user_id;
   END IF;
 
   UPDATE public."indicator_configs"
-  SET user_id = COALESCE(user_id, default_user_id::text),
-      created_at = COALESCE(created_at, now());
+  SET "user_id" = COALESCE("user_id", default_user_id),
+      "created_at" = COALESCE("created_at", now());
 
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'indicator_configs'
-      AND column_name = 'user_id'
+    WHERE table_schema = 'public' AND table_name = 'indicator_configs' AND column_name = 'user_id'
   ) THEN
     EXECUTE 'ALTER TABLE public."indicator_configs" ALTER COLUMN "user_id" SET NOT NULL';
   END IF;
 END $$;
 
-DROP INDEX IF EXISTS public.indicator_configs_name_unique;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'indicator_configs_name_unique'
+  ) THEN
+    DROP INDEX public.indicator_configs_name_unique;
+  END IF;
+END $$;
 
 -- Restructure closed_positions to new schema
-ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "user_id" varchar;
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "user_id" uuid;
 ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "size" numeric(18, 8);
 ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "entry_price" numeric(18, 8);
 ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "exit_price" numeric(18, 8);
-ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "fee_usd" numeric(18, 8) DEFAULT 0;
-ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "opened_at" timestamptz;
-ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "closed_at" timestamptz;
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "pl" numeric(18, 8);
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "fee" numeric(18, 8);
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "duration_min" integer;
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "strategy" text;
+ALTER TABLE public."closed_positions" ADD COLUMN IF NOT EXISTS "notes" text;
 
 DO $$
 DECLARE
-  default_user_id varchar;
-  has_qty boolean;
-  has_entry_px boolean;
-  has_exit_px boolean;
-  has_fee boolean;
-  has_entry_ts boolean;
-  has_exit_ts boolean;
+  default_user_id uuid;
+  default_username text := COALESCE(NULLIF(current_setting('algo.default_user', true), ''), 'demo');
 BEGIN
-  SELECT id INTO default_user_id FROM public."users" ORDER BY created_at LIMIT 1;
-
-  IF default_user_id IS NULL THEN
-    default_user_id := gen_random_uuid();
-    INSERT INTO public."users" (id, username, password) VALUES (default_user_id, 'demo', 'demo')
-    ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password RETURNING id INTO default_user_id;
+  SELECT id INTO default_user_id FROM public."users" WHERE "username" = default_username LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN;
   END IF;
 
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'qty'
-  ) INTO has_qty;
-
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'entry_px'
-  ) INTO has_entry_px;
-
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'exit_px'
-  ) INTO has_exit_px;
-
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'fee'
-  ) INTO has_fee;
-
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'entry_ts'
-  ) INTO has_entry_ts;
-
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'exit_ts'
-  ) INTO has_exit_ts;
-
-  IF has_qty THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "size" = COALESCE("size", "qty")';
-  END IF;
-
-  IF has_entry_px THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "entry_price" = COALESCE("entry_price", "entry_px")';
-  END IF;
-
-  IF has_exit_px THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "exit_price" = COALESCE("exit_price", "exit_px")';
-  END IF;
-
-  IF has_fee THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "fee_usd" = COALESCE("fee_usd", "fee", 0)';
-  ELSE
-    EXECUTE 'UPDATE public."closed_positions" SET "fee_usd" = COALESCE("fee_usd", 0)';
-  END IF;
-
-  IF has_entry_ts THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "opened_at" = COALESCE("opened_at", "entry_ts", now())';
-  ELSE
-    EXECUTE 'UPDATE public."closed_positions" SET "opened_at" = COALESCE("opened_at", now())';
-  END IF;
-
-  IF has_exit_ts THEN
-    EXECUTE 'UPDATE public."closed_positions" SET "closed_at" = COALESCE("closed_at", "exit_ts", now())';
-  ELSE
-    EXECUTE 'UPDATE public."closed_positions" SET "closed_at" = COALESCE("closed_at", now())';
-  END IF;
-
-  EXECUTE 'UPDATE public."closed_positions" SET "pnl_usd" = COALESCE("pnl_usd", 0)';
-  EXECUTE 'UPDATE public."closed_positions" SET "user_id" = COALESCE(("user_id")::uuid, $1::uuid)::text' USING default_user_id;
-END $$;
-
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'size'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "size" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'entry_price'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "entry_price" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'exit_price'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "exit_price" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'fee_usd'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "fee_usd" SET DEFAULT 0';
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "fee_usd" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'opened_at'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "opened_at" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'closed_at'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "closed_at" SET NOT NULL';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'closed_positions' AND column_name = 'pnl_usd'
-  ) THEN
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "pnl_usd" SET DEFAULT 0';
-    EXECUTE 'ALTER TABLE public."closed_positions" ALTER COLUMN "pnl_usd" SET NOT NULL';
-  END IF;
+  UPDATE public."closed_positions"
+  SET "user_id" = COALESCE("user_id", default_user_id);
 
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -228,17 +116,7 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "entry_ts";
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "exit_ts";
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "entry_px";
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "exit_px";
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "qty";
-ALTER TABLE public."closed_positions" DROP COLUMN IF EXISTS "fee";
-
-DROP INDEX IF EXISTS public.idx_closed_positions_symbol_time;
-DROP INDEX IF EXISTS public.idx_closed_positions_user;
-DROP INDEX IF EXISTS public.idx_indicator_configs_user_name;
-
-CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol_time ON public.closed_positions(symbol, closed_at);
-CREATE INDEX IF NOT EXISTS idx_closed_positions_user ON public.closed_positions(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name ON public.indicator_configs(user_id, name);
+-- Add indexes for new schema
+CREATE INDEX IF NOT EXISTS idx_closed_positions_symbol_time ON public."closed_positions"("symbol", "closed_at");
+CREATE INDEX IF NOT EXISTS idx_closed_positions_user ON public."closed_positions"("user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name ON public."indicator_configs"("user_id", "name");
