@@ -27,7 +27,7 @@ import { useChangeStats } from "@/hooks/useChangeStats";
 import { TIMEFRAMES } from "@/constants/timeframes";
 import { formatPct, formatUsd, trendClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { useTwentyFourH } from "../../../../frontend/hooks/use24h";
+import { useTwentyFourH } from "@/hooks/useTwentyFourH";
 import type {
   Position,
   PriceUpdate,
