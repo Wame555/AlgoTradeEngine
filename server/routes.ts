@@ -8,7 +8,7 @@ import { z, ZodError } from "zod";
 import { storage } from "./storage";
 import { db, pool } from "./db";
 import { cached, MICRO_CACHE_TTL_MS, clearCacheKey } from "./cache/apiCache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { paperAccounts } from "@shared/schemaPaper";
 import {
@@ -74,7 +74,7 @@ const HEALTH_CHECK_REQUIREMENTS: HealthIndexSpec[] = [
   { type: "constraint", name: "user_settings_user_id_uniq", table: "user_settings" },
   { type: "index", name: "idx_closed_positions_symbol_time", table: "closed_positions", columns: ["symbol", "closed_at"] },
   { type: "index", name: "idx_closed_positions_user", table: "closed_positions", columns: ["user_id"] },
-  { type: "index", name: "idx_indicator_configs_user_name", table: "indicator_configs", columns: ["user_id", "name"] },
+  { type: "constraint", name: "indicator_configs_user_id_name_uniq", table: "indicator_configs" },
   {
     type: "index",
     name: "user_pair_settings_user_symbol_uniq",
@@ -155,23 +155,19 @@ async function ensureDemoUserRecord(): Promise<User> {
       }
     }
 
-    const [upserted] = await tx
-      .insert(users)
-      .values({
-        email: DEMO_EMAIL,
-        username: DEFAULT_SESSION_USERNAME,
-        password: DEFAULT_SESSION_PASSWORD,
-      })
-      .onConflictDoUpdate({
-        target: users.email,
-        set: {
-          username: DEFAULT_SESSION_USERNAME,
-          password: DEFAULT_SESSION_PASSWORD,
-        },
-      })
-      .returning();
+    const upserted = await tx.execute<User>(
+      sql`
+        INSERT INTO public.users (email, username, password)
+        VALUES (${DEMO_EMAIL}, ${DEFAULT_SESSION_USERNAME}, ${DEFAULT_SESSION_PASSWORD})
+        ON CONFLICT ON CONSTRAINT users_email_uniq DO UPDATE
+        SET
+          username = EXCLUDED.username,
+          password = EXCLUDED.password
+        RETURNING *;
+      `,
+    );
 
-    const demoUser = upserted ?? existingByEmail ?? legacyByUsername ?? legacyById;
+    const demoUser = upserted.rows[0] ?? existingByEmail ?? legacyByUsername ?? legacyById;
 
     if (!demoUser) {
       throw new Error("Failed to resolve demo user account");

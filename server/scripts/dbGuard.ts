@@ -545,11 +545,24 @@ async function ensureIndicatorConfigsArtifacts(client: PgClient): Promise<void> 
   await ensureColumnDefault(client, "indicator_configs", "type", "'GENERIC'");
   await ensureNotNull(client, "indicator_configs", "type");
 
-  await ensureIndex(client, {
+  await client.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'idx_indicator_configs_user_name'
+      ) THEN
+        EXECUTE 'DROP INDEX public.idx_indicator_configs_user_name';
+      END IF;
+    END $$;
+  `);
+
+  await ensureUniqueConstraint(client, {
     table: "indicator_configs",
-    name: "idx_indicator_configs_user_name",
+    name: "indicator_configs_user_id_name_uniq",
     columns: ["user_id", "name"],
-    unique: true,
   });
 }
 

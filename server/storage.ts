@@ -175,14 +175,17 @@ export class DatabaseStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const inserted = await db
-      .insert(users)
-      .values({ ...insertUser, id })
-      .onConflictDoNothing({ target: users.username })
-      .returning();
+    const inserted = await db.execute<User>(
+      sql`
+        INSERT INTO public.users (id, email, username, password)
+        VALUES (${id}, ${insertUser.email ?? null}, ${insertUser.username}, ${insertUser.password})
+        ON CONFLICT ON CONSTRAINT users_username_uniq DO NOTHING
+        RETURNING *;
+      `,
+    );
 
-    if (inserted.length > 0) {
-      return inserted[0]!;
+    if (inserted.rows.length > 0) {
+      return inserted.rows[0]!;
     }
 
     const [existing] = await db
@@ -297,19 +300,19 @@ export class DatabaseStorage implements IStorage {
   async createIndicatorConfig(config: InsertIndicatorConfig): Promise<IndicatorConfig> {
     const id = randomUUID();
     const resolvedType = resolveIndicatorType(config.name, config.type);
-    const [row] = await db
-      .insert(indicatorConfigs)
-      .values({ ...config, id, type: resolvedType })
-      .onConflictDoUpdate({
-        target: [indicatorConfigs.userId, indicatorConfigs.name],
-        set: {
-          payload: config.payload,
-          type: resolvedType,
-          createdAt: new Date(),
-        },
-      })
-      .returning();
-    return row;
+    const result = await db.execute<IndicatorConfig>(
+      sql`
+        INSERT INTO public.indicator_configs (id, user_id, name, type, payload)
+        VALUES (${id}, ${config.userId}, ${config.name}, ${resolvedType}, ${config.payload ?? {}})
+        ON CONFLICT ON CONSTRAINT indicator_configs_user_id_name_uniq DO UPDATE
+        SET
+          payload = EXCLUDED.payload,
+          type = EXCLUDED.type,
+          created_at = ${new Date()}
+        RETURNING *;
+      `,
+    );
+    return result.rows[0]!;
   }
 
   async deleteIndicatorConfig(id: string, userId: string): Promise<void> {
@@ -332,16 +335,13 @@ export class DatabaseStorage implements IStorage {
 
     for (const config of DEFAULT_INDICATOR_CONFIGS) {
       const type = resolveIndicatorType(config.name, config.type);
-      await db
-        .insert(indicatorConfigs)
-        .values({
-          id: randomUUID(),
-          userId,
-          name: config.name,
-          payload: config.payload,
-          type,
-        })
-        .onConflictDoNothing({ target: [indicatorConfigs.userId, indicatorConfigs.name] });
+      await db.execute(
+        sql`
+          INSERT INTO public.indicator_configs (id, user_id, name, type, payload)
+          VALUES (${randomUUID()}, ${userId}, ${config.name}, ${type}, ${config.payload ?? {}})
+          ON CONFLICT ON CONSTRAINT indicator_configs_user_id_name_uniq DO NOTHING;
+        `,
+      );
     }
   }
 
