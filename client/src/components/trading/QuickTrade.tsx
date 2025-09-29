@@ -18,7 +18,7 @@ import { useSession } from "@/hooks/useSession";
 import type { PriceUpdate } from "@/types/trading";
 import { http } from "@/lib/http";
 import type { InputMode, OrderType, QuickTradeResponse, Side } from "@shared/types/trade";
-import { buildQuickTrade } from "../../../../frontend/lib/buildQuickTrade";
+import { buildQuickTrade } from "@/lib/quickTradeCalc";
 
 const tradeFormSchema = z
   .object({
@@ -355,7 +355,7 @@ export function QuickTrade({ priceData }: QuickTradeProps) {
                     </FormControl>
                     <SelectContent>
                       {availablePairs.map((pair) => (
-                        <SelectItem key={pair.id} value={pair.symbol}>
+                        <SelectItem key={pair.id ?? pair.symbol} value={pair.symbol}>
                           {pair.symbol}
                         </SelectItem>
                       ))}
