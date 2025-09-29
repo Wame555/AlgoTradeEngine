@@ -1159,7 +1159,7 @@ export function registerRoutes(app: Express, deps: Deps): void {
   app.get("/api/pairs", async (_req, res) => {
     try {
       const pairs = await storage.getAllTradingPairs();
-      res.json(pairs);
+      res.json(Array.isArray(pairs) ? pairs : []);
     } catch (error) {
       respondWithError(res, "GET /api/pairs", error, "Failed to fetch trading pairs");
     }
