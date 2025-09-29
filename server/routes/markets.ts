@@ -1,33 +1,23 @@
 import { Router } from "express";
+import { DEFAULT_PAIRS } from "../config/defaultPairs";
 
 const router = Router();
-
-// simple in-memory cache
 const cache = new Map<string, { ts: number; data: any }>();
 const TTL_MS = 10_000;
 
 router.get("/markets/24h", async (req, res) => {
   try {
-    const raw = String(req.query.symbols ?? "[]");
     let symbols: string[] = [];
-    try {
-      symbols = JSON.parse(raw);
-      if (!Array.isArray(symbols)) symbols = [];
-    } catch {
-      const s = String(req.query.symbol ?? "").trim();
-      if (s) symbols = [s];
+    const raw = String(req.query.symbols ?? "");
+    if (raw) {
+      try { const arr = JSON.parse(raw); if (Array.isArray(arr)) symbols = arr.filter(s => typeof s === "string" && s.trim()); } catch {}
     }
+    if (symbols.length === 0) symbols = DEFAULT_PAIRS.slice(0, 15);
 
-    if (symbols.length === 0) {
-      return res.status(400).json({ ok: false, message: "symbols query required (JSON array) or symbol" });
-    }
-
-    const key = symbols.sort().join(",");
+    const key = symbols.join(",");
     const now = Date.now();
     const hit = cache.get(key);
-    if (hit && now - hit.ts < TTL_MS) {
-      return res.json({ ok: true, ts: new Date(hit.ts).toISOString(), items: hit.data });
-    }
+    if (hit && now - hit.ts < TTL_MS) return res.json({ ok: true, ts: new Date(hit.ts).toISOString(), items: hit.data });
 
     const url = symbols.length === 1
       ? `https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbols[0])}`
@@ -35,17 +25,16 @@ router.get("/markets/24h", async (req, res) => {
 
     const r = await fetch(url);
     if (!r.ok) throw new Error(`upstream ${r.status}`);
-
     const json = await r.json();
     const list = Array.isArray(json) ? json : [json];
 
     const items = list.map((it: any) => ({
       symbol: String(it.symbol),
-      lastPrice: Number(it.lastPrice ?? it.lastPrice ?? it.lastPrice),
-      priceChangePercent: Number(it.priceChangePercent),
-      highPrice: Number(it.highPrice),
-      lowPrice: Number(it.lowPrice),
-      volume: Number(it.volume),
+      lastPrice: Number(it.lastPrice ?? 0),
+      priceChangePercent: Number(it.priceChangePercent ?? 0),
+      highPrice: Number(it.highPrice ?? 0),
+      lowPrice: Number(it.lowPrice ?? 0),
+      volume: Number(it.volume ?? 0),
     }));
 
     cache.set(key, { ts: now, data: items });
