@@ -633,11 +633,10 @@ async function ensurePairTimeframesArtifacts(client: PgClient): Promise<void> {
     await client.query(`ALTER TABLE public.pair_timeframes ALTER COLUMN symbol SET NOT NULL;`);
   }
 
-  await ensureIndex(client, {
+  await ensureUniqueConstraint(client, {
     table: "pair_timeframes",
-    name: "pair_timeframes_symbol_timeframe_unique",
+    name: "pair_timeframes_symbol_timeframe_uniq",
     columns: ["symbol", "timeframe"],
-    unique: true,
   });
 }
 
