@@ -4,6 +4,7 @@ import quickTradeRouter from "./routes/quickTrade";
 import marketsRouter from "./routes/markets";
 import accountRouter from "./routes/account";
 import sessionRouter from "./routes/session";
+import pairsRouter from "./routes/pairs";
 import { ensureRuntimePrereqs } from "./bootstrap/dbEnsure";
 import { setupVite, serveStatic } from "./vite";
 
@@ -52,6 +53,7 @@ app.get("/healthz", (_req, res) => res.status(200).send("ok"));
   app.use("/api", accountRouter);
   app.use("/api", quickTradeRouter);
   app.use("/api", marketsRouter);
+  app.use("/api", pairsRouter);
 
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);

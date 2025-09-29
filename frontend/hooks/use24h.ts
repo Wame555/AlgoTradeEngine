@@ -8,23 +8,43 @@ export function useTwentyFourH(symbols: string[], intervalMs = 10000) {
 
   React.useEffect(() => {
     let stop = false;
-    async function tick() {
-      try {
-        const url = `/api/markets/24h?symbols=${encodeURIComponent(JSON.stringify(symbols))}`;
-        const r = await fetch(url);
-        const j = await r.json();
-        if (stop) return;
-        if (j?.ok) {
-          const map: Record<string, Item> = {};
-          for (const it of j.items as Item[]) map[it.symbol] = it;
-          setData(map);
-          setTs(j.ts);
-        }
-      } catch {}
+    async function loadAndPoll() {
+      let list = symbols;
+      if (!list || list.length === 0) {
+        try {
+          const r = await fetch("/api/pairs");
+          const j = await r.json();
+          if (j?.ok && Array.isArray(j.symbols) && j.symbols.length) list = j.symbols as string[];
+        } catch {}
+      }
+      if (!list || list.length === 0) return;
+
+      async function tick() {
+        try {
+          const url = `/api/markets/24h?symbols=${encodeURIComponent(JSON.stringify(list!))}`;
+          const r = await fetch(url);
+          const j = await r.json();
+          if (!stop && j?.ok) {
+            const arr = Array.isArray(j.items) ? (j.items as Item[]) : [];
+            const map: Record<string, Item> = {};
+            for (const it of arr) map[it.symbol] = it;
+            setData(map);
+            setTs(j.ts ?? "");
+          }
+        } catch {}
+      }
+      await tick();
+      const id = setInterval(tick, intervalMs);
+      return () => clearInterval(id);
     }
-    tick();
-    const id = setInterval(tick, intervalMs);
-    return () => { stop = true; clearInterval(id); };
+    let cleanup: (() => void) | undefined;
+    loadAndPoll().then((c) => {
+      cleanup = typeof c === "function" ? c : undefined;
+    });
+    return () => {
+      stop = true;
+      if (cleanup) cleanup();
+    };
   }, [JSON.stringify(symbols), intervalMs]);
 
   return { data, ts };
