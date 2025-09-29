@@ -140,32 +140,26 @@ BEGIN
 END$$;
 
 DO $$
-DECLARE
-  has_indicator_index boolean;
 BEGIN
   IF to_regclass('public.indicator_configs') IS NULL THEN
     RETURN;
   END IF;
 
-  SELECT EXISTS (
+  IF EXISTS (
     SELECT 1
-    FROM pg_class i
-    JOIN pg_namespace n ON n.oid = i.relnamespace
-    JOIN pg_index ix ON ix.indexrelid = i.oid
-    JOIN pg_class t ON t.oid = ix.indrelid
-    JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON TRUE
-    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-    WHERE n.nspname = 'public'
-      AND t.relname = 'indicator_configs'
-      AND i.relname = 'idx_indicator_configs_user_name'
-      AND ix.indisunique
-      AND ix.indpred IS NULL
-    GROUP BY i.relname
-    HAVING array_agg(lower(a.attname) ORDER BY k.ordinality) = ARRAY['user_id', 'name']
-  ) INTO has_indicator_index;
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'idx_indicator_configs_user_name'
+  ) THEN
+    EXECUTE 'DROP INDEX public.idx_indicator_configs_user_name';
+  END IF;
 
-  IF NOT has_indicator_index THEN
-    EXECUTE 'DROP INDEX IF EXISTS public.idx_indicator_configs_user_name';
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_indicator_configs_user_name ON public.indicator_configs(user_id, name)';
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'indicator_configs_user_id_name_uniq'
+      AND conrelid = 'public.indicator_configs'::regclass
+  ) THEN
+    EXECUTE 'ALTER TABLE public.indicator_configs ADD CONSTRAINT indicator_configs_user_id_name_uniq UNIQUE (user_id, name)';
   END IF;
 END$$;

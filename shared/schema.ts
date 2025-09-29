@@ -94,7 +94,7 @@ export const indicatorConfigs = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => ({
-    userNameUnique: uniqueIndex("idx_indicator_configs_user_name").on(
+    userNameUnique: unique("indicator_configs_user_id_name_uniq").on(
       table.userId,
       table.name,
     ),
