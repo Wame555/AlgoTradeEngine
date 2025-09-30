@@ -45,11 +45,51 @@ export async function ensureRuntimePrereqs(): Promise<void> {
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint 
+        SELECT 1 FROM pg_constraint
         WHERE conname = 'users_username_uniq'
           AND conrelid = 'public.users'::regclass
       ) THEN
         ALTER TABLE public."users" ADD CONSTRAINT users_username_uniq UNIQUE ("username");
+      END IF;
+    END $$;
+  `);
+
+  // positions.request_id unique constraint (runtime guard)
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname='public' AND indexname='idx_positions_request_id'
+      ) THEN
+        DROP INDEX idx_positions_request_id;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname='positions_request_id_uniq'
+          AND conrelid='public.positions'::regclass
+      ) THEN
+        ALTER TABLE public."positions" ADD CONSTRAINT positions_request_id_uniq UNIQUE (request_id);
+      END IF;
+    END $$;
+  `);
+
+  // pair_timeframes (symbol,timeframe) unique constraint (runtime guard)
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname='public' AND indexname='pair_timeframes_symbol_timeframe_unique'
+      ) THEN
+        DROP INDEX pair_timeframes_symbol_timeframe_unique;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname='pair_timeframes_symbol_timeframe_uniq'
+          AND conrelid='public.pair_timeframes'::regclass
+      ) THEN
+        ALTER TABLE public."pair_timeframes" ADD CONSTRAINT pair_timeframes_symbol_timeframe_uniq UNIQUE (symbol, timeframe);
       END IF;
     END $$;
   `);
