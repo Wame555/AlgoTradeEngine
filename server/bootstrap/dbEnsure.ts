@@ -74,6 +74,36 @@ export async function ensureRuntimePrereqs(): Promise<void> {
     END $$;
   `);
 
+  // trading_pairs.symbol unique constraint (runtime guard for early upserts)
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'trading_pairs_symbol_unique'
+          AND conrelid = 'public.trading_pairs'::regclass
+      ) THEN
+        ALTER TABLE public."trading_pairs" DROP CONSTRAINT trading_pairs_symbol_unique;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'trading_pairs_symbol_unique'
+      ) THEN
+        DROP INDEX public."trading_pairs_symbol_unique";
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'trading_pairs_symbol_uniq'
+          AND conrelid = 'public.trading_pairs'::regclass
+      ) THEN
+        ALTER TABLE public."trading_pairs"
+          ADD CONSTRAINT trading_pairs_symbol_uniq UNIQUE ("symbol");
+      END IF;
+    END $$;
+  `);
+
   // pair_timeframes (symbol,timeframe) unique constraint (runtime guard)
   await db.execute(sql`
     DO $$
