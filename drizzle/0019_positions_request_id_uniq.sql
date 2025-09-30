@@ -13,7 +13,7 @@ BEGIN
     WHERE schemaname = 'public'
       AND indexname = 'idx_positions_request_id'
   ) THEN
-    DROP INDEX public.idx_positions_request_id;
+    DROP INDEX idx_positions_request_id;
   END IF;
 END $$;
 

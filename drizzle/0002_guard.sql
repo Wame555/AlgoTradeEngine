@@ -46,29 +46,25 @@ $$;
 -- Ensure the unique constraint on (symbol, timeframe) exists
 DO $$
 BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND indexname = 'pair_timeframes_symbol_timeframe_unique'
-    ) THEN
-        EXECUTE 'DROP INDEX public.pair_timeframes_symbol_timeframe_unique';
-    END IF;
-END
-$$;
+  IF EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname='public' AND indexname='pair_timeframes_symbol_timeframe_unique'
+  ) THEN
+    DROP INDEX pair_timeframes_symbol_timeframe_unique;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'pair_timeframes_symbol_timeframe_uniq'
-          AND conrelid = 'public.pair_timeframes'::regclass
-    ) THEN
-        EXECUTE 'ALTER TABLE public."pair_timeframes" ADD CONSTRAINT pair_timeframes_symbol_timeframe_uniq UNIQUE ("symbol", "timeframe")';
-    END IF;
-END
-$$;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='pair_timeframes_symbol_timeframe_uniq'
+      AND conrelid='public.pair_timeframes'::regclass
+  ) THEN
+    ALTER TABLE public."pair_timeframes"
+      ADD CONSTRAINT pair_timeframes_symbol_timeframe_uniq UNIQUE (symbol, timeframe);
+  END IF;
+END $$;
 
 -- Add the trading pair trading limit columns when missing
 ALTER TABLE public."trading_pairs" ADD COLUMN IF NOT EXISTS "min_qty" numeric(18, 8);
