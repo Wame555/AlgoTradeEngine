@@ -6,7 +6,7 @@ BEGIN
     WHERE schemaname = 'public'
       AND indexname = 'idx_indicator_configs_user_name'
   ) THEN
-    EXECUTE 'DROP INDEX public.idx_indicator_configs_user_name';
+    DROP INDEX idx_indicator_configs_user_name;
   END IF;
 END $$;
 

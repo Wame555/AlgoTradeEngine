@@ -80,7 +80,7 @@ BEGIN
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND indexname = 'indicator_configs_name_unique'
   ) THEN
-    DROP INDEX public.indicator_configs_name_unique;
+    DROP INDEX indicator_configs_name_unique;
   END IF;
 END $$;
 
